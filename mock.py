@@ -3,11 +3,12 @@ from fastapi import FastAPI, Request, HTTPException, Response, status
 from fastapi.responses import JSONResponse
 from datetime import date
 from itertools import count
+from typing import Dict, Any
 
-app = FastAPI(title="Mock eLabFTW API", version="0.1.0")
+app = FastAPI(title="Mock eLabFTW API", version="0.2.0")
 
 # "Banco" em memória
-experiments: dict[int, dict] = {}
+experiments: Dict[int, Dict[str, Any]] = {}
 _id_gen = count(1)
 
 API_PREFIX = "/api/v2"
@@ -41,20 +42,27 @@ def create_experiment(request: Request):
         "locked": False,
         "status": {"id": 1, "label": "Draft"},
     }
-    # Location header com a URL do recurso criado
     host = request.headers.get("host", "127.0.0.1:8000")
     location = f"http://{host}{API_PREFIX}/experiments/{exp_id}"
     return JSONResponse(status_code=status.HTTP_201_CREATED, content=None, headers={"Location": location})
 
 @app.patch(f"{API_PREFIX}/experiments/{{exp_id}}", status_code=status.HTTP_204_NO_CONTENT)
-def patch_experiment(exp_id: int, request: Request, payload: dict):
+async def patch_experiment(exp_id: int, request: Request):
     require_auth(request)
     exp = experiments.get(exp_id)
     if not exp:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+    payload = await request.json()
     for k in ("title", "date", "body"):
         if k in payload:
             exp[k] = payload[k]
+    if "status" in payload and isinstance(payload["status"], dict):
+        label = payload["status"].get("label")
+        if isinstance(label, str) and label.strip():
+            exp["status"]["label"] = label.strip()
+    if "locked" in payload:
+        exp["locked"] = bool(payload["locked"])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @app.get(f"{API_PREFIX}/experiments/{{exp_id}}")
