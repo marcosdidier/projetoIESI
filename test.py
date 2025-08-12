@@ -16,4 +16,5 @@ def testar_api():
     else:
         print(f"Erro {r.status_code}: {r.text}")
 
-testar_api()
+if __name__ == "__main__":
+    testar_api()
