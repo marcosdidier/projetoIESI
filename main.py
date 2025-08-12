@@ -5,8 +5,8 @@ import json
 from datetime import date
 import requests
 
-ELAB_BASE = os.environ.get("ELAB_BASE", "http://localhost/api/v2")
-ELAB_API_KEY = os.environ.get("ELAB_API_KEY")
+ELAB_BASE = "localhost..."
+ELAB_API_KEY = "3-xxxxxxxxxxxx"
 
 HEADERS_JSON = {
     "Authorization": ELAB_API_KEY or "",
@@ -188,3 +188,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
