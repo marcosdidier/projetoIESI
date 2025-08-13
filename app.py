@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -8,8 +11,8 @@ import streamlit as st
 # =========================
 # Configs padrão (edite se quiser defaults)
 # =========================
-DEFAULT_ELAB_URL = "https://SEU_ELN/api/v2"
-DEFAULT_API_KEY = "SUA_CHAVE_API_AQUI"
+DEFAULT_ELAB_URL = "https://SEU_ELN/api/v2"      # ex.: https://liacliexemplo.chickenkiller.com/api/v2
+DEFAULT_API_KEY = "SUA_CHAVE_API_AQUI"           # crie no seu perfil no eLabFTW
 DEFAULT_VERIFY_TLS = True
 TIMEOUT = 30  # seg por requisição
 
@@ -88,7 +91,7 @@ def _req(base: str, api_key: str, verify_tls: bool, method: str, path: str,
         try:
             return r.json()   # JSON
         except Exception:
-            return r.content  # bytes (ex.: PDF)
+            return r.content  # bytes (ex.: PDF quando chamamos com Accept adequado)
     return {}
 
 def GET(base, key, verify, path, params=None):  return _req(base, key, verify, "GET", path, params=params)
@@ -240,8 +243,26 @@ def get_status(base: str, key: str, verify: bool, exp_id: int) -> str:
     exp = GET(base, key, verify, f"experiments/{exp_id}")
     return str(exp.get("status_name") or exp.get("status_label") or exp.get("status", "desconhecido"))
 
-def export_pdf(base: str, key: str, verify: bool, exp_id: int) -> bytes:
-    return _req(base, key, verify, "GET", f"experiments/{exp_id}/export", params={"format": "pdf"})
+def export_pdf(base: str, key: str, verify: bool, exp_id: int, *, include_changelog: bool = False) -> bytes:
+    """
+    Exporta o experimento em PDF pelo endpoint correto:
+    GET /experiments/{id}?format=pdf[&changelog=true]
+    """
+    url = _url(base, f"experiments/{exp_id}")
+    headers = {
+        "Authorization": key,
+        # pedimos PDF explicitamente; alguns servidores respeitam o Accept
+        "Accept": "application/pdf, application/octet-stream",
+    }
+    params = {"format": "pdf"}
+    if include_changelog:
+        params["changelog"] = "true"
+
+    r = requests.get(url, headers=headers, params=params, timeout=max(60, TIMEOUT), verify=verify)
+    if r.status_code != 200:
+        body = r.text if r.text else f"status={r.status_code}"
+        raise RuntimeError(f"GET experiments/{exp_id}?format=pdf -> {r.status_code}: {body}")
+    return r.content
 
 # =========================
 # UI
@@ -375,13 +396,14 @@ st.divider()
 st.subheader("5) Baixar PDF do experimento")
 with st.form("form_pdf"):
     exp_id_pdf = st.text_input("ID do experimento (PDF)")
+    include_changelog = st.checkbox("Incluir changelog no PDF", value=False)
     go_pdf = st.form_submit_button("Gerar e preparar download")
     if go_pdf:
         if not exp_id_pdf.strip().isdigit():
             st.error("ID inválido.")
         else:
             try:
-                pdf_bytes = export_pdf(elab_url, api_key, verify_tls, int(exp_id_pdf.strip()))
+                pdf_bytes = export_pdf(elab_url, api_key, verify_tls, int(exp_id_pdf.strip()), include_changelog=include_changelog)
                 st.session_state.pdf_bytes = pdf_bytes if isinstance(pdf_bytes, bytes) else bytes(pdf_bytes)
                 st.session_state.pdf_name = f"experiment_{exp_id_pdf.strip()}.pdf"
                 st.success("PDF pronto para download abaixo.")
