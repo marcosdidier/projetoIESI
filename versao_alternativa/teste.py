@@ -1,334 +1,303 @@
 import json
-import sys
-import logging
 from datetime import datetime
+from typing import Any, Dict, Optional
 
 import requests
-import mysql.connector
-from mysql.connector import errorcode
+import streamlit as st
 
-# ==============================
-# CONFIGURAÇÕES (edite aqui diretamente)
-# ==============================
-# eLabFTW
-ELAB_URL = "https://SEU_ELN/api/v2"      # ex.: https://eln.exemplo.org/api/v2
-ELAB_API_KEY = "SUA_CHAVE_API_AQUI"      # gere no seu usuário do eLabFTW
-
-# MySQL
-MYSQL_CFG = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "root",
-    "database": "platform_ext",
-}
-
-# Configura o sistema de logs para exibir informações úteis no terminal.
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-)
-
-# Constantes do projeto
-ITEM_TYPE_TITLE = "Paciente"
-TEMPLATE_TITLE = "Análise Clínica Padrão"
-TEMPLATE_BODY_HTML = """
-<h2>Dados da Amostra</h2>
-<ul>
-    <li>ID Agendamento: {{agendamento_id}}</li>
-    <li>ID Paciente (Item): {{item_paciente_id}}</li>
-    <li>Data/Hora da Coleta: {{data_coleta}}</li>
-    <li>Tipo de Amostra: {{tipo_amostra}}</li>
-</ul>
-<h2>Resultados Bioquímica</h2>
-<table>
-<thead><tr><th>Analito</th><th>Resultado</th><th>Unidade</th><th>Ref.</th><th>Obs.</th></tr></thead>
-<tbody>
-<tr><td>Glicose</td><td></td><td>mg/dL</td><td>70–99</td><td></td></tr>
-<tr><td>Ureia</td><td></td><td>mg/dL</td><td>10–50</td><td></td></tr>
-</tbody>
-</table>
-<h2>Observações Técnicas</h2><p></p>
-""".strip()
-
-# ==============================
-# CLASSES PARA SEPARAR RESPONSABILIDADES
-# ==============================
+# ==============================================================================
+# MELHORIA: CLASSES PARA SEPARAÇÃO DE RESPONSABILIDADES
+# Esta estrutura separa a lógica da API (ElabClient) da lógica de negócio
+# (PlatformService), que por sua vez é separada da lógica da interface (UI).
+# ==============================================================================
 
 class ElabClient:
-    """Uma classe dedicada a todas as interações com a API do eLabFTW."""
-    def __init__(self, base_url: str, api_key: str, timeout=30):
+    """Classe responsável exclusivamente pela comunicação HTTP com a API do eLabFTW."""
+    def __init__(self, base_url: str, api_key: str, verify_tls: bool, timeout: int = 30):
         if not base_url or not api_key or "SUA_CHAVE" in api_key:
-            raise ValueError("ELAB_URL e ELAB_API_KEY devem ser configurados no início do script.")
-        self.base = base_url.rstrip("/")
-        self.h = {"Authorization": api_key, "Accept": "application/json", "Content-Type": "application/json"}
+            raise ValueError("URL da API ou Chave da API não foram configuradas corretamente.")
+        self.base_url = base_url.rstrip('/')
+        self.api_key = api_key
+        self.verify_tls = verify_tls
         self.timeout = timeout
+        self.headers = {
+            "Authorization": self.api_key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
 
-    def _request(self, method, path, **kwargs):
-        url = f"{self.base}/{path.lstrip('/')}"
+    def request(self, method: str, path: str, json_body: Optional[Dict] = None, params: Optional[Dict] = None) -> Any:
+        """Método genérico para fazer uma requisição."""
+        url = f"{self.base_url}/{path.lstrip('/')}"
         try:
-            response = requests.request(method, url, headers=self.h, timeout=self.timeout, **kwargs)
-            response.raise_for_status()  # Lança uma exceção para erros HTTP (4xx ou 5xx)
-            return response.json() if response.content else {}
+            r = requests.request(
+                method=method.upper(),
+                url=url,
+                headers=self.headers,
+                json=json_body,
+                params=params,
+                timeout=self.timeout,
+                verify=self.verify_tls,
+            )
+            r.raise_for_status()  # Lança exceção para status 4xx/5xx
+            if r.content:
+                # Retorna bytes se não for JSON (para o PDF)
+                return r.json() if "application/json" in r.headers.get("Content-Type", "") else r.content
+            return {}
         except requests.exceptions.HTTPError as e:
-            logging.error(f"Erro HTTP na API do eLabFTW: {e.response.status_code} - {e.response.text}")
-            raise
+            # Re-lança o erro com uma mensagem mais clara
+            msg = e.response.text if e.response.text else f"status={e.response.status_code}"
+            raise RuntimeError(f"Erro na API ({e.response.status_code}): {msg}") from e
         except requests.exceptions.RequestException as e:
-            logging.error(f"Erro de conexão com a API do eLabFTW: {e}")
-            raise
+            raise RuntimeError(f"Erro de conexão: {e}") from e
 
-    def get(self, path, params=None):
-        return self._request("get", path, params=params)
-
-    def post(self, path, payload=None):
-        return self._request("post", path, json=payload or {})
-
-    def patch(self, path, payload=None):
-        return self._request("patch", path, json=payload or {})
-
-
-class DatabaseManager:
-    """Gerencia todas as operações do banco de dados da plataforma externa."""
-    def __init__(self, config):
-        self.config = config
-        self._check_and_create_tables()
-
-    def _get_connection(self):
-        try:
-            conn = mysql.connector.connect(**self.config)
-            return conn
-        except mysql.connector.Error as err:
-            if err.errno == errorcode.ER_ACCESS_DENIED_ERROR:
-                logging.error("Acesso negado. Verifique usuário/senha do MySQL.")
-            elif err.errno == errorcode.ER_BAD_DB_ERROR:
-                logging.error(f"Banco de dados '{self.config['database']}' não existe.")
-            else:
-                logging.error(f"Erro de conexão com o MySQL: {err}")
-            raise
-
-    def _check_and_create_tables(self):
-        try:
-            con = self._get_connection()
-            cur = con.cursor()
-            logging.info("Verificando se as tabelas 'patients' e 'appointments' existem...")
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS patients (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    name VARCHAR(255) NOT NULL,
-                    item_id INT NOT NULL UNIQUE,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS appointments (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    patient_id INT NOT NULL,
-                    experiment_id INT NOT NULL UNIQUE,
-                    status VARCHAR(255) NOT NULL,
-                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    last_checked DATETIME NULL,
-                    FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE RESTRICT
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-            """)
-            con.commit()
-            cur.close()
-            con.close()
-        except mysql.connector.Error as err:
-            logging.error(f"Falha ao inicializar tabelas do banco de dados: {err}")
-            sys.exit(1)
-
-    def execute_query(self, query, params=None, fetch=None):
-        try:
-            con = self._get_connection()
-            cur = con.cursor(dictionary=True)
-            cur.execute(query, params or ())
-            if fetch == 'one':
-                result = cur.fetchone()
-            elif fetch == 'all':
-                result = cur.fetchall()
-            else:
-                con.commit()
-                result = cur.lastrowid
-            cur.close()
-            con.close()
-            return result
-        except mysql.connector.Error as err:
-            logging.error(f"Erro ao executar query no DB: {err}")
-            raise
+    @staticmethod
+    def _to_list(data: Any) -> list:
+        """Extrai uma lista de uma resposta da API, que pode vir em vários formatos."""
+        if isinstance(data, dict):
+            for k in ("items", "data", "results"):
+                if isinstance(data.get(k), list):
+                    return data[k]
+        return data if isinstance(data, list) else []
 
 
 class PlatformService:
-    """Orquestra as operações entre a API do eLabFTW e o banco de dados local."""
-    def __init__(self, elab: ElabClient, db: DatabaseManager):
-        self.elab = elab
-        self.db = db
-        self.patient_item_type_id = None
-        self.analysis_template_id = None
+    """
+    Contém toda a LÓGICA DE NEGÓCIO. Não sabe nada sobre Streamlit (st.*).
+    Ela usa um ElabClient para interagir com a API.
+    """
+    def __init__(self, client: ElabClient):
+        self.elab = client
+        # Constantes de negócio
+        self.item_type_title = "Paciente"
+        self.template_title = "Análise Clínica Padrão"
+        self.template_body_html = TEMPLATE_BODY_HTML # Usa a constante global
 
-    def initialize_elab_configs(self):
-        logging.info("Inicializando configurações no eLabFTW (Item Type e Template)...")
-        items_types = self.elab.get("items_types")
-        for it in items_types:
-            if it.get("title", "").strip().lower() == ITEM_TYPE_TITLE.lower():
-                self.patient_item_type_id = it["id"]
-                break
-        if not self.patient_item_type_id:
-            created = self.elab.post("items_types", {"title": ITEM_TYPE_TITLE})
-            self.patient_item_type_id = created["id"]
-        logging.info(f"ID do Item Type '{ITEM_TYPE_TITLE}': {self.patient_item_type_id}")
+    def ensure_item_type_patient(self) -> int:
+        data = self.elab.request("GET", "items_types")
+        for it in self.elab._to_list(data):
+            if (it.get("title") or "").strip().lower() == self.item_type_title.lower():
+                return int(it["id"])
+        created = self.elab.request("POST", "items_types", json_body={"title": self.item_type_title})
+        return int(created["id"])
 
-        templates = self.elab.get("experiments/templates")
-        for tpl in templates:
-            if tpl.get("title", "").strip().lower() == TEMPLATE_TITLE.lower():
-                self.analysis_template_id = tpl["id"]
-                break
-        if not self.analysis_template_id:
-            created = self.elab.post("experiments/templates", {"title": TEMPLATE_TITLE, "body": TEMPLATE_BODY_HTML})
-            self.analysis_template_id = created["id"]
-        logging.info(f"ID do Template '{TEMPLATE_TITLE}': {self.analysis_template_id}")
+    def ensure_template(self) -> int:
+        data = self.elab.request("GET", "experiments/templates")
+        for tpl in self.elab._to_list(data):
+            if (tpl.get("title") or "").strip().lower() == self.template_title.lower():
+                return int(tpl["id"])
+        created = self.elab.request("POST", "experiments/templates", json_body={"title": self.template_title, "body": self.template_body_html})
+        return int(created["id"])
 
-    def register_patient(self, name: str):
-        if not self.patient_item_type_id:
-            raise RuntimeError("Configurações do eLabFTW não inicializadas. Execute a inicialização primeiro.")
+    def register_patient(self, name: str) -> int:
+        if not name.strip():
+            raise ValueError("O nome do paciente não pode ser vazio.")
+        item_type_id = self.ensure_item_type_patient()
+        created = self.elab.request("POST", "items", json_body={"title": name.strip(), "items_type_id": item_type_id})
+        item_id = created.get("id") or created.get("item_id")
+        if not isinstance(item_id, int):
+            raise RuntimeError("Não foi possível obter o ID do Item recém-criado.")
+        return item_id
 
-        logging.info(f"Criando item no eLabFTW para o paciente '{name}'...")
-        created_item = self.elab.post("items", {"title": name, "items_type_id": self.patient_item_type_id})
-        item_id = created_item.get("id")
-        if not item_id:
-             raise RuntimeError("Não foi possível obter o ID do item criado no eLabFTW.")
+    def create_and_link_experiment(self, item_id: int, display_name: str, appointment_id: str, sample_type: str) -> Dict[str, Any]:
+        self.ensure_template() # Garante que o template existe
+        title = f"Análises {display_name or 'Paciente'} - {datetime.now().date().isoformat()}"
+        
+        # 1. Cria o experimento vazio
+        exp = self.elab.request("POST", "experiments", json_body={"title": title.strip()})
+        exp_id = exp.get("id")
+        if not isinstance(exp_id, int):
+            raise RuntimeError("Falha ao criar o esqueleto do experimento.")
 
-        logging.info(f"Salvando paciente no banco de dados local (item_id={item_id})...")
-        patient_id = self.db.execute_query(
-            "INSERT INTO patients(name, item_id) VALUES (%s, %s)",
-            (name, item_id)
-        )
-        return {"local_id": patient_id, "elab_item_id": item_id}
-
-    def schedule_analysis(self, local_patient_id: int, appointment_details: dict):
-        patient = self.db.execute_query("SELECT * FROM patients WHERE id=%s", (local_patient_id,), fetch='one')
-        if not patient:
-            raise ValueError("Paciente com ID local não encontrado.")
-
-        logging.info(f"Criando experimento no eLabFTW para o paciente ID {local_patient_id}...")
-        title = f"Análises Paciente {patient['name']} - {datetime.now().date().isoformat()}"
-        body_vars = {
-            "agendamento_id": appointment_details.get("id", "N/A"),
-            "item_paciente_id": patient["item_id"],
-            "data_coleta": datetime.now().isoformat(timespec="minutes"),
-            "tipo_amostra": appointment_details.get("sample_type", "Não especificado"),
+        # 2. Preenche o corpo com o template
+        vars_dict = {
+            "agendamento_id": appointment_id, "item_paciente_id": item_id,
+            "data_coleta": datetime.now().isoformat(timespec="minutes"), "tipo_amostra": sample_type
         }
-        
-        body = TEMPLATE_BODY_HTML
-        for k, v in body_vars.items():
+        body = self.template_body_html
+        for k, v in vars_dict.items():
             body = body.replace(f"{{{{{k}}}}}", str(v))
-        
-        created_exp = self.elab.post("experiments", {"title": title, "body": body})
-        exp_id = created_exp.get("id")
-        if not exp_id:
-            raise RuntimeError("Não foi possível obter o ID do experimento criado no eLabFTW.")
+        self.elab.request("PATCH", f"experiments/{exp_id}", json_body={"body": body})
 
-        self.elab.post(f"experiments/{exp_id}/items", {"item_id": patient["item_id"]})
-        logging.info(f"Experimento {exp_id} vinculado ao item {patient['item_id']}.")
-
-        status = created_exp.get("status_name", "Em andamento")
-        appointment_id = self.db.execute_query(
-            "INSERT INTO appointments(patient_id, experiment_id, status) VALUES (%s, %s, %s)",
-            (local_patient_id, exp_id, status)
-        )
-        return {"local_appointment_id": appointment_id, "elab_experiment_id": exp_id, "status": status}
-    
-    def check_experiment_status(self, experiment_id: int):
-        logging.info(f"Verificando status do experimento {experiment_id}...")
-        exp = self.elab.get(f"experiments/{experiment_id}")
-        status = exp.get("status_name", "desconhecido")
-        self.db.execute_query(
-            "UPDATE appointments SET status=%s, last_checked=%s WHERE experiment_id=%s",
-            (status, datetime.now(), experiment_id)
-        )
-        return status
-
-    def process_webhook_notification(self, webhook_payload: dict):
-        logging.info(f"Processando notificação de webhook recebida: {webhook_payload}")
-        event = webhook_payload.get("event")
-        data = webhook_payload.get("data")
-
-        if event == "EXPERIMENT_UPDATED" and data:
-            experiment_id = data.get("id")
-            status = data.get("status_name")
-            if experiment_id and status:
-                logging.info(f"Webhook: Experimento {experiment_id} atualizado para status '{status}'.")
-                self.db.execute_query(
-                    "UPDATE appointments SET status=%s, last_checked=%s WHERE experiment_id=%s",
-                    (status, datetime.now(), experiment_id)
-                )
-                logging.info("Status do agendamento atualizado no banco de dados local.")
-            else:
-                logging.warning("Webhook de experimento atualizado, mas sem dados suficientes.")
-        else:
-            logging.info("Webhook recebido, mas não é um evento de interesse.")
-
-
-def main():
-    try:
-        elab_client = ElabClient(ELAB_URL, ELAB_API_KEY)
-        db_manager = DatabaseManager(MYSQL_CFG)
-        service = PlatformService(elab_client, db_manager)
-    except (ValueError, mysql.connector.Error) as e:
-        logging.error(f"Falha na inicialização. Verifique as configurações no início do script. Erro: {e}")
-        sys.exit(1)
-
-    while True:
-        print("\n=== Plataforma Externa (PoC Refatorado) ===")
-        print("1) Inicializar Configurações no eLabFTW")
-        print("2) Cadastrar novo paciente")
-        print("3) Agendar análise para paciente")
-        print("4) Verificar status de uma análise (Polling)")
-        print("5) Simular recebimento de Webhook (Análise Concluída)")
-        print("6) Sair")
-        op = input("> Escolha: ").strip()
-
+        # 3. Linka ao item do paciente
         try:
-            if op == "1":
-                service.initialize_elab_configs()
-            elif op == "2":
-                name = input("Nome do paciente: ").strip()
-                if name:
-                    result = service.register_patient(name)
-                    logging.info(f"Paciente cadastrado com sucesso! ID Local: {result['local_id']}, ID eLabFTW: {result['elab_item_id']}")
-                else:
-                    logging.warning("Nome inválido.")
-            elif op == "3":
-                pid_str = input("ID local do paciente: ").strip()
-                if pid_str.isdigit():
-                    details = {"sample_type": input("Tipo de amostra (ex: Sangue): ").strip()}
-                    result = service.schedule_analysis(int(pid_str), details)
-                    logging.info(f"Análise agendada! ID Agendamento: {result['local_appointment_id']}, ID Experimento: {result['elab_experiment_id']}, Status: '{result['status']}'")
-                else:
-                    logging.warning("ID do paciente inválido.")
-            elif op == "4":
-                exp_id_str = input("ID do experimento no eLabFTW: ").strip()
-                if exp_id_str.isdigit():
-                    status = service.check_experiment_status(int(exp_id_str))
-                    logging.info(f"Status atual do experimento {exp_id_str}: '{status}'")
-                else:
-                    logging.warning("ID do experimento inválido.")
-            elif op == "5":
-                exp_id_str = input("ID do experimento que foi 'concluído': ").strip()
-                if exp_id_str.isdigit():
-                    mock_webhook_payload = {
-                        "event": "EXPERIMENT_UPDATED",
-                        "data": { "id": int(exp_id_str), "status_name": "Concluído" }
-                    }
-                    service.process_webhook_notification(mock_webhook_payload)
-                else:
-                    logging.warning("ID do experimento inválido.")
-            elif op == "6":
-                logging.info("Saindo.")
-                break
-            else:
-                logging.warning("Opção inválida.")
-        except (RuntimeError, ValueError, requests.exceptions.RequestException, mysql.connector.Error) as e:
-            logging.error(f"Ocorreu um erro durante a operação: {e}")
+            self.elab.request("POST", f"experiments/{exp_id}/items", json_body={"item_id": item_id})
+        except RuntimeError:
+            self.elab.request("POST", f"experiments/{exp_id}/items_links", json_body={"item_id": item_id})
 
-if __name__ == "__main__":
-    main()
+        # 4. Busca o status final
+        status = self.get_experiment_status(exp_id)
+        return {"id": exp_id, "status": status}
+
+    def get_experiment_status(self, exp_id: int) -> str:
+        exp = self.elab.request("GET", f"experiments/{exp_id}")
+        return str(exp.get("status_name") or exp.get("status_label") or exp.get("status", "desconhecido"))
+
+    def export_experiment_pdf(self, exp_id: int) -> bytes:
+        pdf_bytes = self.elab.request("GET", f"experiments/{exp_id}/export", params={"format": "pdf"})
+        if not isinstance(pdf_bytes, bytes):
+            raise TypeError("A resposta da API para o PDF não era do tipo 'bytes'.")
+        return pdf_bytes
+
+# ==============================================================================
+# LÓGICA DA INTERFACE (UI)
+# Esta parte do código lida apenas com a apresentação e interação com o usuário.
+# ==============================================================================
+
+
+
+st.set_page_config(page_title="Plataforma Externa • eLabFTW (demo)", page_icon="🧪", layout="centered")
+
+# Forma correta de inicializar o st.session_state
+if "patients" not in st.session_state:
+    st.session_state.patients = {}  # Atribuição direta, sem anotação de tipo
+
+if "pdf_bytes" not in st.session_state:
+    st.session_state.pdf_bytes = None  # Atribuição direta
+    st.session_state.pdf_name = None   # Atribuição direta
+    
+# --- Constantes Globais de UI e Template ---
+TEMPLATE_BODY_HTML = """
+<h2>Dados da Amostra</h2>
+<ul><li>ID Agendamento: {{agendamento_id}}</li><li>ID Paciente (Item): {{item_paciente_id}}</li><li>Data/Hora da Coleta: {{data_coleta}}</li><li>Tipo de Amostra: {{tipo_amostra}}</li></ul>
+<h2>Resultados Bioquímica</h2>
+<table><thead><tr><th>Analito</th><th>Resultado</th><th>Unidade</th><th>Ref.</th><th>Obs.</th></tr></thead><tbody><tr><td>Glicose</td><td></td><td>mg/dL</td><td>70–99</td><td></td></tr><tr><td>Ureia</td><td></td><td>mg/dL</td><td>10–50</td><td></td></tr></tbody></table>
+<h2>Observações Técnicas</h2><p></p>
+""".strip()
+
+# --- Renderização da UI ---
+st.title("🧪 Plataforma Externa • eLabFTW (demo)")
+
+with st.sidebar:
+    st.header("Configuração da API")
+    elab_url = st.text_input("ELAB_URL", value="https://demo.elabftw.net/api/v2")
+    api_key = st.text_input("ELAB_API_KEY", value="coloque_a_chave_da_demo_aqui", type="password")
+    verify_tls = st.checkbox("Verificar certificado TLS (recomendado)", value=True)
+
+# Instancia os serviços. A UI vai interagir com 'service'.
+try:
+    client = ElabClient(elab_url, api_key, verify_tls)
+    service = PlatformService(client)
+except ValueError as e:
+    st.sidebar.error(f"Erro de configuração: {e}")
+    st.stop() # Interrompe a execução se a configuração estiver errada
+
+# Botão de Teste
+if st.sidebar.button("Testar conexão"):
+    with st.spinner("Testando..."):
+        try:
+            service.ensure_item_type_patient()
+            st.sidebar.success("Conexão OK! ✅")
+        except Exception as e:
+            st.sidebar.error(f"Falha no acesso: {e}")
+
+st.divider()
+
+# 1) Inicializar
+st.subheader("1) Inicializar (ItemType + Template)")
+if st.button("Garantir Configurações no eLabFTW"):
+    with st.spinner("Verificando e criando o que for necessário..."):
+        try:
+            iid = service.ensure_item_type_patient()
+            st.success(f"ItemType 'Paciente' OK (id={iid})")
+            tid = service.ensure_template()
+            st.success(f"Template 'Análise Clínica Padrão' OK (id={tid})")
+        except Exception as e:
+            st.error(f"Erro: {e}")
+
+st.divider()
+
+# 2) Cadastrar paciente
+st.subheader("2) Cadastrar paciente (cria Item)")
+with st.form("form_patient"):
+    name = st.text_input("Nome do paciente")
+    if st.form_submit_button("Cadastrar"):
+        with st.spinner(f"Cadastrando '{name}'..."):
+            try:
+                item_id = service.register_patient(name)
+                # A UI é responsável por atualizar o estado da sessão
+                st.session_state.patients[name.strip()] = item_id
+                st.success(f"Paciente '{name}' cadastrado → item_id={item_id}")
+            except Exception as e:
+                st.error(f"Erro: {e}")
+
+if st.session_state.patients:
+    st.caption("Pacientes cadastrados nesta sessão:")
+    st.table([{"Nome": n, "item_id": iid} for n, iid in st.session_state.patients.items()])
+
+st.divider()
+
+# 3) Marcar experimento
+st.subheader("3) Marcar experimento (criar + linkar)")
+with st.form("form_experiment"):
+    pacientes_sessao = list(st.session_state.patients.keys())
+    if pacientes_sessao:
+        nome_sel = st.selectbox("Paciente (desta sessão)", pacientes_sessao)
+        item_id_selecionado = st.session_state.patients[nome_sel]
+        display_name = nome_sel
+    else:
+        st.info("Nenhum paciente na sessão. Cadastre no passo 2.")
+        item_id_manual = st.text_input("Ou informe o item_id do paciente manualmente")
+        item_id_selecionado = int(item_id_manual) if item_id_manual.isdigit() else None
+        display_name = f"Paciente {item_id_selecionado}" if item_id_selecionado else ""
+
+    agendamento_id = st.text_input("ID do agendamento (da sua plataforma)")
+    tipo_amostra = st.text_input("Tipo de amostra", value="Sangue")
+
+    if st.form_submit_button("Criar experimento"):
+        if not item_id_selecionado or not agendamento_id.strip():
+            st.warning("É necessário um paciente e um ID de agendamento.")
+        else:
+            with st.spinner("Criando e vinculando experimento..."):
+                try:
+                    result = service.create_and_link_experiment(
+                        item_id_selecionado, display_name, agendamento_id, tipo_amostra
+                    )
+                    st.success(f"Experimento criado e linkado! ID: {result['id']} | Status: {result['status']}")
+                except Exception as e:
+                    st.error(f"Erro: {e}")
+
+st.divider()
+
+# 4) Ver status
+st.subheader("4) Ver status do experimento")
+exp_id_status = st.text_input("ID do experimento para consultar")
+if st.button("Consultar status"):
+    if exp_id_status.isdigit():
+        with st.spinner("Consultando..."):
+            try:
+                status = service.get_experiment_status(int(exp_id_status))
+                st.success(f"Status do experimento {exp_id_status}: **{status}**")
+            except Exception as e:
+                st.error(f"Erro: {e}")
+    else:
+        st.warning("Informe um ID de experimento válido.")
+
+st.divider()
+
+# 5) Baixar PDF
+st.subheader("5) Baixar PDF do experimento")
+exp_id_pdf = st.text_input("ID do experimento para gerar PDF")
+if st.button("Gerar e preparar download do PDF"):
+    if exp_id_pdf.isdigit():
+        with st.spinner("Gerando PDF no servidor do eLabFTW..."):
+            try:
+                pdf_bytes = service.export_experiment_pdf(int(exp_id_pdf))
+                st.session_state.pdf_bytes = pdf_bytes
+                st.session_state.pdf_name = f"experimento_{exp_id_pdf}.pdf"
+                st.success("PDF pronto! Use o botão de download abaixo.")
+            except Exception as e:
+                st.error(f"Erro ao gerar PDF: {e}")
+    else:
+        st.warning("Informe um ID de experimento válido.")
+
+if st.session_state.get("pdf_bytes"):
+    st.download_button(
+        label="⬇️ Baixar PDF",
+        data=st.session_state.pdf_bytes,
+        file_name=st.session_state.pdf_name,
+        mime="application/pdf"
+    )
+
+# LINHA FALTANTE ADICIONADA AQUI
+st.caption("Dica: esta demo não usa banco; a lista de pacientes é somente desta sessão.")
