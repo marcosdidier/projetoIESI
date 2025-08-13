@@ -7,6 +7,7 @@ import requests
 from typing import Dict, Optional
 import os
 from dotenv import load_dotenv
+from streamlit_autorefresh import st_autorefresh
 
 # =========================
 # Configs
@@ -210,60 +211,54 @@ st.divider()
 
 # 4) Ver status
 st.subheader("4) Consultar status da solicitação")
-with st.container(border=True):
-    with st.form("form_status"):
-        ag_key = st.text_input("Chave do agendamento")
-        go_status = st.form_submit_button("Consultar")
-        if go_status:
-            ag_key = ag_key.strip()
-            
-            # Validação inicial dos dados
-            if not ag_key:
-                st.error("Informe a chave do agendamento.")
-            elif ag_key not in st.session_state.agendamentos:
-                st.error("Chave não encontrada nesta sessão. Verifique se digitou corretamente.")
+
+# Campo para digitar chave
+ag_key = st.text_input("Chave do agendamento")
+
+# Verifica se a chave é válida
+if ag_key.strip() and ag_key in st.session_state.agendamentos:
+    exp_id = st.session_state.agendamentos[ag_key.strip()]
+
+    try:
+        with st.spinner("Buscando status..."):
+            response = requests.get(
+                f"{BACKEND_URL}/experimentos/{exp_id}/status",
+                headers=api_headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            status = data['status']
+
+            if status == 'None':
+                st.info("🔄 Solicitação pendente. Aguardando processamento.")
+            elif status == '1':
+                st.info("⏳ Solicitação em Andamento.")
+            elif status == '2':
+                st.success("✅ Solicitação Concluída!")
+                st.balloons()
+            elif status == '3':
+                st.warning("⚠️ Solicitação Requer Reavaliação.")
+            elif status == '4':
+                st.error("❌ Solicitação Falhou.")
             else:
-                try:
-                    with st.spinner("Buscando status..."):
-                        exp_id = st.session_state.agendamentos[ag_key]
-                        response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/status", headers=api_headers)
-                        response.raise_for_status() # Lança erro se a resposta for 4xx ou 5xx
-                        data = response.json()
-                        
-                        # Exibe o status
-                        if data['status'] == 'None':
-                            st.info(f"🔄 Solicitação pendente. Aguardando processamento.")
-                        
-                        # Verifica se o status indica que a análise está em progresso
-                        elif data['status'] == '1':
-                            st.info(f"⏳ Solicitação em Andamento.")
+                st.warning(f"⚠️ Status desconhecido: '{status}'.")
 
-                        # Verifica se o status indica que a análise foi concluída
-                        elif data['status'] == '2':
-                            st.success(f"✅ Solicitação Concluída!")
-                            st.balloons()
-                        
-                        # Verifica se o status indica que a solicitação precisa ser refeita
-                        elif data['status'] == '3':
-                            st.warning(f"⚠️ Solicitação Requer Reavaliação.")
-                        
-                        # Caso o status seja outro, exibe um aviso
-                        elif data['status'] == '4':
-                            st.error(f"❌ Solicitação Falhou.")
-                        
-                        else:
-                            st.warning(f"⚠️ Status desconhecido: '{data['status']}'.")
+        # Só ativa o autorefresh se ainda não estiver concluído
+        if status != '2':
+            st_autorefresh(interval=30 * 1000, key="status_refresh")
 
-                except requests.exceptions.RequestException as e:
-                    # Tratamento de erro aprimorado
-                    error_message = str(e)
-                    if e.response is not None:
-                        try:
-                            error_detail = e.response.json().get("detail", e.response.text)
-                            error_message = f"Erro {e.response.status_code}: {error_detail}"
-                        except:
-                            error_message = f"Erro {e.response.status_code}: {e.response.text}"
-                    st.error(f"Erro ao consultar status: {error_message}")
+    except requests.exceptions.RequestException as e:
+        error_message = str(e)
+        if e.response is not None:
+            try:
+                error_detail = e.response.json().get("detail", e.response.text)
+                error_message = f"Erro {e.response.status_code}: {error_detail}"
+            except:
+                error_message = f"Erro {e.response.status_code}: {e.response.text}"
+        st.error(f"Erro ao consultar status: {error_message}")
+
+elif ag_key.strip():
+    st.error("Chave não encontrada nesta sessão.")
 
 st.divider()
 
