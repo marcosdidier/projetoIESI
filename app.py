@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -419,3 +416,4 @@ if st.session_state.pdf_bytes and st.session_state.pdf_name:
     )
 
 st.caption("Dica: esta demo não usa banco; a lista de pacientes é somente desta sessão.")
+
