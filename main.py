@@ -1,29 +1,16 @@
 import json
-import sys
 from datetime import datetime
 
 import requests
-import mysql.connector
 
 # ==============================
 # CONFIGURAÇÕES (edite aqui)
 # ==============================
-# eLabFTW
-ELAB_URL = "https://SEU_ELN/api/v2"     # ex.: https://eln.exemplo.org/api/v2
-ELAB_API_KEY = "SUA_CHAVE_API_AQUI"     # gere no seu usuário do eLabFTW
+ELAB_URL = "https://SEU_ELN/api/v2"   # ex.: https://eln.exemplo.org/api/v2
+ELAB_API_KEY = "SUA_CHAVE_API_AQUI"  # gere no seu usuário do eLabFTW
 
-# MySQL
-MYSQL_CFG = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "root",
-    "password": "root",
-    "database": "platform_ext",
-}
-
-# Títulos usados no passo 2
 ITEM_TYPE_TITLE = "Paciente"
-TEMPLATE_TITLE = "Análise Clínica Padrão"
+TEMPLATE_TITLE  = "Análise Clínica Padrão"
 
 TEMPLATE_BODY_HTML = """
 <h2>Dados da Amostra</h2>
@@ -56,162 +43,89 @@ TEMPLATE_BODY_HTML = """
 <h2>Anexos</h2><p>Faça upload do PDF do laudo no experimento (Uploads).</p>
 """.strip()
 
+# ==============================
+# Estado em memória (sem DB)
+# ==============================
+# Guardamos pares (nome -> item_id) enquanto o programa estiver aberto.
+PATIENTS = {}  # {"Naruto Uzumaki": 123}
 
 # ==============================
-# HTTP client eLabFTW
+# Cliente HTTP
 # ==============================
-class ELab:
-    def __init__(self, base_url: str, api_key: str, timeout=30):
-        self.base = base_url.rstrip("/")
-        self.h = {
-            "Authorization": api_key,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        self.timeout = timeout
+def _url(path: str) -> str:
+    return f"{ELAB_URL.rstrip('/')}/{path.lstrip('/')}"
 
-    def _url(self, path: str) -> str:
-        return f"{self.base}/{path.lstrip('/')}"
+HEADERS = {
+    "Authorization": ELAB_API_KEY,
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+}
 
-    def get(self, path, params=None):
-        r = requests.get(self._url(path), headers=self.h, params=params, timeout=self.timeout)
-        r.raise_for_status()
-        return r.json() if r.content else {}
+def GET(path, params=None):
+    r = requests.get(_url(path), headers=HEADERS, params=params, timeout=30)
+    r.raise_for_status()
+    return r.json() if r.content else {}
 
-    def post(self, path, payload=None):
-        data = json.dumps(payload or {})
-        r = requests.post(self._url(path), headers=self.h, data=data, timeout=max(self.timeout, 60))
-        if r.status_code not in (200, 201):
-            try:
-                detail = r.json()
-            except Exception:
-                detail = r.text
-            raise RuntimeError(f"POST {path} falhou: {r.status_code} - {detail}")
-        return r.json() if r.content else {}
+def POST(path, payload=None):
+    r = requests.post(_url(path), headers=HEADERS, data=json.dumps(payload or {}), timeout=60)
+    if r.status_code not in (200, 201):
+        try:
+            detail = r.json()
+        except Exception:
+            detail = r.text
+        raise RuntimeError(f"POST {path} falhou: {r.status_code} - {detail}")
+    return r.json() if r.content else {}
 
-    def patch(self, path, payload=None):
-        data = json.dumps(payload or {})
-        r = requests.patch(self._url(path), headers=self.h, data=data, timeout=max(self.timeout, 60))
-        r.raise_for_status()
-        return r.json() if r.content else {}
-
-
-# ==============================
-# MySQL helpers
-# ==============================
-def db():
-    return mysql.connector.connect(**MYSQL_CFG)
-
-def db_init():
-    con = db()
-    cur = con.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS patients (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            item_id INT NOT NULL,
-            created_at DATETIME NOT NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS appointments (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            patient_id INT NOT NULL,
-            experiment_id INT NOT NULL,
-            status VARCHAR(255) NOT NULL,
-            created_at DATETIME NOT NULL,
-            last_checked DATETIME NULL,
-            FOREIGN KEY (patient_id) REFERENCES patients(id)
-                ON UPDATE CASCADE ON DELETE RESTRICT
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    """)
-    con.commit()
-    cur.close()
-    con.close()
-
-def db_add_patient(name: str, item_id: int) -> int:
-    con = db(); cur = con.cursor()
-    cur.execute(
-        "INSERT INTO patients(name, item_id, created_at) VALUES (%s, %s, %s)",
-        (name, item_id, datetime.utcnow())
-    )
-    con.commit()
-    pid = cur.lastrowid
-    cur.close(); con.close()
-    return pid
-
-def db_get_patient(pid: int):
-    con = db(); cur = con.cursor(dictionary=True)
-    cur.execute("SELECT * FROM patients WHERE id=%s", (pid,))
-    row = cur.fetchone()
-    cur.close(); con.close()
-    return row
-
-def db_add_appointment(patient_id: int, experiment_id: int, status: str) -> int:
-    con = db(); cur = con.cursor()
-    cur.execute(
-        "INSERT INTO appointments(patient_id, experiment_id, status, created_at) VALUES (%s,%s,%s,%s)",
-        (patient_id, experiment_id, status, datetime.utcnow())
-    )
-    con.commit()
-    appt_id = cur.lastrowid
-    cur.close(); con.close()
-    return appt_id
-
-def db_update_status(experiment_id: int, status: str):
-    con = db(); cur = con.cursor()
-    cur.execute(
-        "UPDATE appointments SET status=%s, last_checked=%s WHERE experiment_id=%s",
-        (status, datetime.utcnow(), experiment_id)
-    )
-    con.commit()
-    cur.close(); con.close()
-
+def PATCH(path, payload=None):
+    r = requests.patch(_url(path), headers=HEADERS, data=json.dumps(payload or {}), timeout=60)
+    r.raise_for_status()
+    return r.json() if r.content else {}
 
 # ==============================
 # Passo 2: garantir ItemType + Template
 # ==============================
-def ensure_item_type_patient(api: ELab) -> int:
-    data = api.get("items_types")
+def ensure_item_type_patient() -> int:
+    data = GET("items_types")
     entries = data.get("items", data)
     for it in entries:
         if (it.get("title") or "").strip().lower() == ITEM_TYPE_TITLE.lower():
             return it["id"]
-    created = api.post("items_types", {
+    created = POST("items_types", {
         "title": ITEM_TYPE_TITLE,
         "body": "Tipo para cadastro de Pacientes/Pesquisadores."
     })
     return created["id"]
 
-def ensure_template(api: ELab) -> int:
-    data = api.get("experiments/templates")
+def ensure_template() -> int:
+    data = GET("experiments/templates")
     entries = data.get("items", data)
     for tpl in entries:
         if (tpl.get("title") or "").strip().lower() == TEMPLATE_TITLE.lower():
             return tpl["id"]
-    created = api.post("experiments/templates", {"title": TEMPLATE_TITLE, "body": TEMPLATE_BODY_HTML})
+    created = POST("experiments/templates", {"title": TEMPLATE_TITLE, "body": TEMPLATE_BODY_HTML})
     return created["id"]
 
-
 # ==============================
-# Operações de fluxo
+# Operações principais
 # ==============================
-def create_patient_item(api: ELab, items_type_id: int, name: str) -> int:
-    created = api.post("items", {"title": name, "items_type_id": items_type_id})
+def register_patient(name: str) -> int:
+    items_type_id = ensure_item_type_patient()
+    created = POST("items", {"title": name, "items_type_id": items_type_id})
     item_id = created.get("id") or created.get("item_id")
     if not item_id:
-        # fallback: tenta pegar por listagem recente
-        items = api.get("items?limit=5&order=desc")
+        # fallback: tenta achar por listagem recente
+        items = GET("items?limit=5&order=desc")
         for it in items.get("items", items):
             if (it.get("title") or "").strip() == name:
                 item_id = it["id"]
                 break
     if not item_id:
-        raise RuntimeError("Não consegui obter o id do Item recém-criado.")
+        raise RuntimeError("Não foi possível obter o id do Item recém-criado.")
+    PATIENTS[name] = int(item_id)
     return int(item_id)
 
-def create_experiment_from_template(api: ELab, title: str, body_vars: dict) -> int:
-    exp = api.post("experiments", {"title": title})
+def create_experiment_from_template(title: str, body_vars: dict) -> int:
+    exp = POST("experiments", {"title": title})
     exp_id = exp.get("id")
     if not exp_id:
         raise RuntimeError("Falha ao criar experimento.")
@@ -219,45 +133,49 @@ def create_experiment_from_template(api: ELab, title: str, body_vars: dict) -> i
     body = TEMPLATE_BODY_HTML
     for k, v in (body_vars or {}).items():
         body = body.replace(f"{{{{{k}}}}}", str(v))
-    api.patch(f"experiments/{exp_id}", {"title": title, "body": body})
+    PATCH(f"experiments/{exp_id}", {"title": title, "body": body})
     return int(exp_id)
 
-def link_experiment_to_item(api: ELab, experiment_id: int, item_id: int):
+def link_experiment_to_item(experiment_id: int, item_id: int):
     try:
-        api.post(f"experiments/{experiment_id}/items", {"item_id": item_id})
+        POST(f"experiments/{experiment_id}/items", {"item_id": item_id})
     except Exception:
         # fallback para instâncias com endpoint alternativo
-        api.post(f"experiments/{experiment_id}/items_links", {"item_id": item_id})
+        POST(f"experiments/{experiment_id}/items_links", {"item_id": item_id})
 
-def get_experiment_status(api: ELab, experiment_id: int) -> str:
-    exp = api.get(f"experiments/{experiment_id}")
+def get_experiment_status(experiment_id: int) -> str:
+    exp = GET(f"experiments/{experiment_id}")
     return exp.get("status_name") or exp.get("status_label") or str(exp.get("status", "desconhecido"))
 
+def export_experiment_pdf(experiment_id: int, out_path: str):
+    url = _url(f"experiments/{experiment_id}/export")
+    r = requests.get(url, headers=HEADERS, params={"format": "pdf"}, timeout=120)
+    r.raise_for_status()
+    with open(out_path, "wb") as f:
+        f.write(r.content)
 
 # ==============================
-# Menu simples (terminal)
+# UI simples (terminal)
 # ==============================
 def menu():
-    print("\n=== Plataforma Externa (CLI) ===")
+    print("\n=== Plataforma Externa (CLI sem DB) ===")
     print("1) Inicializar Passo 2 (ItemType + Template)")
-    print("2) Cadastrar paciente")
-    print("3) Marcar experimento (agendar)")
+    print("2) Cadastrar paciente (cria Item)")
+    print("3) Marcar experimento (cria e linka)")
     print("4) Ver status do experimento")
-    print("5) Sair")
+    print("5) Baixar PDF do experimento")
+    print("6) Listar pacientes (memória)")
+    print("7) Sair")
     return input("> Escolha: ").strip()
 
 def main():
-    # init
-    api = ELab(ELAB_URL, ELAB_API_KEY)
-    db_init()
-
     while True:
         op = menu()
 
         if op == "1":
             try:
-                it_id = ensure_item_type_patient(api)
-                tpl_id = ensure_template(api)
+                it_id = ensure_item_type_patient()
+                tpl_id = ensure_template()
                 print(f"[OK] Item Type '{ITEM_TYPE_TITLE}' id={it_id}")
                 print(f"[OK] Template '{TEMPLATE_TITLE}' id={tpl_id}")
             except Exception as e:
@@ -268,40 +186,46 @@ def main():
             if not name:
                 print("Nome inválido."); continue
             try:
-                it_id = ensure_item_type_patient(api)
-                item_id = create_patient_item(api, it_id, name)
-                pid = db_add_patient(name, item_id)
-                print(f"[OK] Paciente cadastrado (local_id={pid}) → item_id={item_id}")
+                item_id = register_patient(name)
+                print(f"[OK] Paciente '{name}' → item_id={item_id}")
             except Exception as e:
                 print(f"[ERRO] {e}")
 
         elif op == "3":
-            pid_str = input("ID local do paciente: ").strip()
-            agendamento_id = input("ID do agendamento: ").strip()
-            tipo_amostra = input("Tipo de amostra (ex.: Sangue): ").strip() or "Sangue"
-            if not pid_str.isdigit() or not agendamento_id:
-                print("Dados inválidos."); continue
+            # Sem DB: você pode escolher por nome (se já cadastrou nesta sessão) ou digitar item_id manualmente.
+            mode = input("Você tem o item_id do paciente? (s/n): ").strip().lower()
+            if mode == "s":
+                try:
+                    item_id = int(input("item_id do paciente: ").strip())
+                except ValueError:
+                    print("item_id inválido."); continue
+                nome = input("Nome (apenas para título): ").strip() or f"Paciente {item_id}"
+            else:
+                nome = input("Nome do paciente (precisa ter sido cadastrado nesta sessão): ").strip()
+                if nome not in PATIENTS:
+                    print("Paciente não consta na memória. Cadastre ou informe item_id.")
+                    continue
+                item_id = PATIENTS[nome]
 
-            pid = int(pid_str)
-            row = db_get_patient(pid)
-            if not row:
-                print("Paciente não encontrado."); continue
+            agendamento_id = input("ID do agendamento: ").strip()
+            tipo_amostra   = input("Tipo de amostra (ex.: Sangue): ").strip() or "Sangue"
+
+            if not agendamento_id:
+                print("ID do agendamento inválido."); continue
 
             try:
-                _ = ensure_template(api)  # garante existência
-                title = f"Análises Paciente {pid} - {datetime.now().date().isoformat()}"
+                ensure_template()
+                title = f"Análises {nome} - {datetime.now().date().isoformat()}"
                 body_vars = {
                     "agendamento_id": agendamento_id,
-                    "item_paciente_id": row["item_id"],
+                    "item_paciente_id": item_id,
                     "data_coleta": datetime.now().isoformat(timespec="minutes"),
                     "tipo_amostra": tipo_amostra,
                 }
-                exp_id = create_experiment_from_template(api, title, body_vars)
-                link_experiment_to_item(api, exp_id, row["item_id"])
-                status = get_experiment_status(api, exp_id)
-                appt_id = db_add_appointment(pid, exp_id, status)
-                print(f"[OK] Experimento criado (id={exp_id}) e linkado ao paciente (item_id={row['item_id']}).")
-                print(f"[OK] Agendamento salvo (id={appt_id}) com status='{status}'.")
+                exp_id = create_experiment_from_template(title, body_vars)
+                link_experiment_to_item(exp_id, item_id)
+                status = get_experiment_status(exp_id)
+                print(f"[OK] Experimento criado (id={exp_id}) e linkado ao item_id={item_id}. Status inicial: {status}")
             except Exception as e:
                 print(f"[ERRO] {e}")
 
@@ -309,21 +233,37 @@ def main():
             exp_str = input("ID do experimento: ").strip()
             if not exp_str.isdigit():
                 print("ID inválido."); continue
-            exp_id = int(exp_str)
             try:
-                status = get_experiment_status(api, exp_id)
-                db_update_status(exp_id, status)
-                print(f"[OK] Status atual: {status}")
+                status = get_experiment_status(int(exp_str))
+                print(f"[OK] Status: {status}")
             except Exception as e:
                 print(f"[ERRO] {e}")
 
         elif op == "5":
+            exp_str = input("ID do experimento: ").strip()
+            out     = input("Arquivo de saída (ex.: laudo.pdf): ").strip() or f"experiment_{exp_str}.pdf"
+            if not exp_str.isdigit():
+                print("ID inválido."); continue
+            try:
+                export_experiment_pdf(int(exp_str), out)
+                print(f"[OK] PDF salvo em: {out}")
+            except Exception as e:
+                print(f"[ERRO] {e}")
+
+        elif op == "6":
+            if not PATIENTS:
+                print("(vazio) Cadastre com a opção 2.")
+            else:
+                print("Pacientes em memória:")
+                for name, iid in PATIENTS.items():
+                    print(f" - {name}: item_id={iid}")
+
+        elif op == "7":
             print("Saindo.")
-            sys.exit(0)
+            break
 
         else:
             print("Opção inválida.")
-
 
 if __name__ == "__main__":
     main()
