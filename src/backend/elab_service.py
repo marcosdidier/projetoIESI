@@ -31,7 +31,7 @@ TEMPLATE_BODY_HTML = """
       <th>Analito</th>
       <th>Resultado</th>
       <th>Unidade</th>
-      <th>Ref. (Exemplo Ratos de Lab.)</th>
+      <th>Valores de Referência</th>
       <th>Obs.</th>
     </tr>
   </thead>

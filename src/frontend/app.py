@@ -5,17 +5,29 @@
 import streamlit as st
 import requests
 from typing import Dict, Optional
+import os
+from dotenv import load_dotenv
 
 # =========================
-# Configs (agora aponta para o nosso back-end)
+# Configs
 # =========================
-DEFAULT_ELAB_URL = "https://liacliexemplo.chickenkiller.com/api/v2"
-DEFAULT_API_KEY = "2-6f194dd878335148f9cabe46bb2873a66f1c293ffeba68e382fc0c469160579cd4e9d7787e0e948cab622"
+
+# Carregar variáveis do arquivo .env
+load_dotenv()
+DEFAULT_ELAB_URL = os.getenv("ELAB_URL", "")
+DEFAULT_API_KEY = os.getenv("API_KEY", "")
 BACKEND_URL = "http://127.0.0.1:8000"  # Endereço da nossa API FastAPI
 
 # =========================
-# Estado em memória (para guardar dados durante a sessão do usuário)
+# Estado em memória (para guardar dados durante a sessão do usuário) 
 # =========================
+# """
+# !!!!!!!!!!!!!!!!!!!
+# TIRAR ISSO QUANDO FIZER O BANCO DE DADOS PARA CADASTRO
+# DO PESQUISADOR
+# !!!!!!!!!!!!!!!!!!!
+# """
+
 if "patients" not in st.session_state:
     st.session_state.patients: Dict[str, int] = {}
 if "agendamentos" not in st.session_state:
@@ -40,7 +52,7 @@ with st.sidebar:
     api_headers = {"elab-url": elab_url, "elab-api-key": api_key}
 
     if st.button("Testar conexão"):
-        if not api_key or "SUA_CHAVE" in api_key:
+        if not api_key or api_key == DEFAULT_API_KEY:
             st.warning("Por favor, insira uma chave de API válida.")
         else:
             try:
