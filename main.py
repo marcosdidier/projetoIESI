@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import json
 from datetime import datetime
 import requests
@@ -242,3 +239,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
