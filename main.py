@@ -1,237 +1,332 @@
-# main.py — Cliente CLI para criar, listar, ver, atualizar e "travar" (lock) experimentos
-import argparse
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import json
-from datetime import date
-from pathlib import Path
+import sys
+from datetime import datetime
+
 import requests
+import mysql.connector
 
-ELAB_BASE = "http://127.0.0.1:8000/api/v2"  # Mock FastAPI por padrão
-ELAB_API_KEY = "3-mock-key-abc"
+# ==============================
+# CONFIGURAÇÕES (edite aqui)
+# ==============================
+# eLabFTW
+ELAB_URL = "https://SEU_ELN/api/v2"     # ex.: https://eln.exemplo.org/api/v2
+ELAB_API_KEY = "SUA_CHAVE_API_AQUI"     # gere no seu usuário do eLabFTW
 
-HEADERS_JSON = {
-    "Authorization": ELAB_API_KEY,
-    "Accept": "application/json",
-    "Content-Type": "application/json",
+# MySQL
+MYSQL_CFG = {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "root",
+    "password": "root",
+    "database": "platform_ext",
 }
 
-def die(msg, resp=None):
-    print(f"❌ {msg}")
-    if resp is not None:
-        try:
-            print("→ Detalhes:", resp.status_code, resp.text[:800])
-        except Exception:
-            pass
-    raise SystemExit(1)
+# Títulos usados no passo 2
+ITEM_TYPE_TITLE = "Paciente"
+TEMPLATE_TITLE = "Análise Clínica Padrão"
 
-def test_key_or_exit():
+TEMPLATE_BODY_HTML = """
+<h2>Dados da Amostra</h2>
+<ul>
+  <li>ID Agendamento: {{agendamento_id}}</li>
+  <li>ID Paciente (Item): {{item_paciente_id}}</li>
+  <li>Data/Hora da Coleta: {{data_coleta}}</li>
+  <li>Tipo de Amostra: {{tipo_amostra}}</li>
+</ul>
+<h2>Resultados Bioquímica</h2>
+<table>
+<thead><tr><th>Analito</th><th>Resultado</th><th>Unidade</th><th>Ref.</th><th>Obs.</th></tr></thead>
+<tbody>
+<tr><td>Glicose</td><td></td><td>mg/dL</td><td>70–99</td><td></td></tr>
+<tr><td>Ureia</td><td></td><td>mg/dL</td><td>10–50</td><td></td></tr>
+<tr><td>Creatinina</td><td></td><td>mg/dL</td><td>0.7–1.3</td><td></td></tr>
+</tbody>
+</table>
+<h2>Resultados Hematologia</h2>
+<table>
+<thead><tr><th>Parâmetro</th><th>Resultado</th><th>Unidade</th><th>Ref.</th><th>Obs.</th></tr></thead>
+<tbody>
+<tr><td>Hemoglobina</td><td></td><td>g/dL</td><td>13.0–17.0</td><td></td></tr>
+<tr><td>Hematócrito</td><td></td><td>%</td><td>40–52</td><td></td></tr>
+<tr><td>Plaquetas</td><td></td><td>x10^3/µL</td><td>150–450</td><td></td></tr>
+</tbody>
+</table>
+<h2>Observações Técnicas</h2><p></p>
+<h2>Conclusão</h2><p></p>
+<h2>Anexos</h2><p>Faça upload do PDF do laudo no experimento (Uploads).</p>
+""".strip()
+
+
+# ==============================
+# HTTP client eLabFTW
+# ==============================
+class ELab:
+    def __init__(self, base_url: str, api_key: str, timeout=30):
+        self.base = base_url.rstrip("/")
+        self.h = {
+            "Authorization": api_key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+        self.timeout = timeout
+
+    def _url(self, path: str) -> str:
+        return f"{self.base}/{path.lstrip('/')}"
+
+    def get(self, path, params=None):
+        r = requests.get(self._url(path), headers=self.h, params=params, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+    def post(self, path, payload=None):
+        data = json.dumps(payload or {})
+        r = requests.post(self._url(path), headers=self.h, data=data, timeout=max(self.timeout, 60))
+        if r.status_code not in (200, 201):
+            try:
+                detail = r.json()
+            except Exception:
+                detail = r.text
+            raise RuntimeError(f"POST {path} falhou: {r.status_code} - {detail}")
+        return r.json() if r.content else {}
+
+    def patch(self, path, payload=None):
+        data = json.dumps(payload or {})
+        r = requests.patch(self._url(path), headers=self.h, data=data, timeout=max(self.timeout, 60))
+        r.raise_for_status()
+        return r.json() if r.content else {}
+
+
+# ==============================
+# MySQL helpers
+# ==============================
+def db():
+    return mysql.connector.connect(**MYSQL_CFG)
+
+def db_init():
+    con = db()
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS patients (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            item_id INT NOT NULL,
+            created_at DATETIME NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS appointments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            patient_id INT NOT NULL,
+            experiment_id INT NOT NULL,
+            status VARCHAR(255) NOT NULL,
+            created_at DATETIME NOT NULL,
+            last_checked DATETIME NULL,
+            FOREIGN KEY (patient_id) REFERENCES patients(id)
+                ON UPDATE CASCADE ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    """)
+    con.commit()
+    cur.close()
+    con.close()
+
+def db_add_patient(name: str, item_id: int) -> int:
+    con = db(); cur = con.cursor()
+    cur.execute(
+        "INSERT INTO patients(name, item_id, created_at) VALUES (%s, %s, %s)",
+        (name, item_id, datetime.utcnow())
+    )
+    con.commit()
+    pid = cur.lastrowid
+    cur.close(); con.close()
+    return pid
+
+def db_get_patient(pid: int):
+    con = db(); cur = con.cursor(dictionary=True)
+    cur.execute("SELECT * FROM patients WHERE id=%s", (pid,))
+    row = cur.fetchone()
+    cur.close(); con.close()
+    return row
+
+def db_add_appointment(patient_id: int, experiment_id: int, status: str) -> int:
+    con = db(); cur = con.cursor()
+    cur.execute(
+        "INSERT INTO appointments(patient_id, experiment_id, status, created_at) VALUES (%s,%s,%s,%s)",
+        (patient_id, experiment_id, status, datetime.utcnow())
+    )
+    con.commit()
+    appt_id = cur.lastrowid
+    cur.close(); con.close()
+    return appt_id
+
+def db_update_status(experiment_id: int, status: str):
+    con = db(); cur = con.cursor()
+    cur.execute(
+        "UPDATE appointments SET status=%s, last_checked=%s WHERE experiment_id=%s",
+        (status, datetime.utcnow(), experiment_id)
+    )
+    con.commit()
+    cur.close(); con.close()
+
+
+# ==============================
+# Passo 2: garantir ItemType + Template
+# ==============================
+def ensure_item_type_patient(api: ELab) -> int:
+    data = api.get("items_types")
+    entries = data.get("items", data)
+    for it in entries:
+        if (it.get("title") or "").strip().lower() == ITEM_TYPE_TITLE.lower():
+            return it["id"]
+    created = api.post("items_types", {
+        "title": ITEM_TYPE_TITLE,
+        "body": "Tipo para cadastro de Pacientes/Pesquisadores."
+    })
+    return created["id"]
+
+def ensure_template(api: ELab) -> int:
+    data = api.get("experiments/templates")
+    entries = data.get("items", data)
+    for tpl in entries:
+        if (tpl.get("title") or "").strip().lower() == TEMPLATE_TITLE.lower():
+            return tpl["id"]
+    created = api.post("experiments/templates", {"title": TEMPLATE_TITLE, "body": TEMPLATE_BODY_HTML})
+    return created["id"]
+
+
+# ==============================
+# Operações de fluxo
+# ==============================
+def create_patient_item(api: ELab, items_type_id: int, name: str) -> int:
+    created = api.post("items", {"title": name, "items_type_id": items_type_id})
+    item_id = created.get("id") or created.get("item_id")
+    if not item_id:
+        # fallback: tenta pegar por listagem recente
+        items = api.get("items?limit=5&order=desc")
+        for it in items.get("items", items):
+            if (it.get("title") or "").strip() == name:
+                item_id = it["id"]
+                break
+    if not item_id:
+        raise RuntimeError("Não consegui obter o id do Item recém-criado.")
+    return int(item_id)
+
+def create_experiment_from_template(api: ELab, title: str, body_vars: dict) -> int:
+    exp = api.post("experiments", {"title": title})
+    exp_id = exp.get("id")
+    if not exp_id:
+        raise RuntimeError("Falha ao criar experimento.")
+
+    body = TEMPLATE_BODY_HTML
+    for k, v in (body_vars or {}).items():
+        body = body.replace(f"{{{{{k}}}}}", str(v))
+    api.patch(f"experiments/{exp_id}", {"title": title, "body": body})
+    return int(exp_id)
+
+def link_experiment_to_item(api: ELab, experiment_id: int, item_id: int):
     try:
-        r = requests.get(f"{ELAB_BASE}/users/me", headers=HEADERS_JSON, timeout=10)
-    except requests.RequestException as e:
-        die(f"Falha de conexão: {e}")
-    if r.status_code != 200:
-        die("Chave API inválida ou sem permissão.", r)
-    me = r.json()
-    print(f"✅ Conectado como: {me.get('fullname') or me.get('username')}")
-    return me
+        api.post(f"experiments/{experiment_id}/items", {"item_id": item_id})
+    except Exception:
+        # fallback para instâncias com endpoint alternativo
+        api.post(f"experiments/{experiment_id}/items_links", {"item_id": item_id})
 
-def list_experiments():
-    r = requests.get(f"{ELAB_BASE}/experiments", headers=HEADERS_JSON, timeout=10)
-    if r.status_code != 200:
-        die("Erro ao listar experimentos.", r)
-    exps = r.json()
-    if not exps:
-        print("📭 Nenhum experimento encontrado.")
-        return
-    print("\n=== Experimentos ===")
-    for e in exps:
-        status_label = e.get("status", {}).get("label", "-")
-        print(f"[{e['id']}] {e['title']} — Status: {status_label} — Data: {e['date']} — Locked: {e.get('locked')}")
-    print("=== Fim da lista ===\n")
+def get_experiment_status(api: ELab, experiment_id: int) -> str:
+    exp = api.get(f"experiments/{experiment_id}")
+    return exp.get("status_name") or exp.get("status_label") or str(exp.get("status", "desconhecido"))
 
-def view_experiment(exp_id: int):
-    r = requests.get(f"{ELAB_BASE}/experiments/{exp_id}", headers=HEADERS_JSON, timeout=10)
-    if r.status_code != 200:
-        die(f"Erro ao buscar experimento {exp_id}.", r)
-    e = r.json()
-    print(json.dumps(e, indent=2, ensure_ascii=False))
 
-def post_new_experiment() -> int:
-    r = requests.post(f"{ELAB_BASE}/experiments", headers=HEADERS_JSON, timeout=10)
-    if r.status_code not in (201, 202):
-        die("Não foi possível criar o experimento.", r)
-    location = r.headers.get("Location") or r.headers.get("location")
-    if not location or "/experiments/" not in location:
-        die("Resposta sem header 'Location' com ID do experimento.", r)
-    return int(location.rstrip("/").split("/")[-1])
-
-def patch_experiment(exp_id: int, payload: dict):
-    r = requests.patch(f"{ELAB_BASE}/experiments/{exp_id}", headers=HEADERS_JSON, json=payload, timeout=10)
-    if r.status_code not in (200, 204):
-        die("Falha ao atualizar experimento.", r)
-
-def ask(prompt: str, required: bool = True, default: str | None = None) -> str:
-    while True:
-        val = input(f"{prompt.strip()} " + (f"[{default}] " if default else "")).strip()
-        if not val and default is not None:
-            return default
-        if val or not required:
-            return val
-        print("  Campo obrigatório.")
-
-def ask_int(prompt: str, min_value: int = 0, max_value: int | None = None, default: int | None = None) -> int:
-    while True:
-        raw = ask(prompt, required=(default is None), default=str(default) if default is not None else None)
-        try:
-            x = int(raw)
-            if x < min_value:
-                print(f"  Valor mínimo: {min_value}."); continue
-            if max_value is not None and x > max_value:
-                print(f"  Valor máximo: {max_value}."); continue
-            return x
-        except ValueError:
-            print("  Digite um número inteiro válido.")
-
-def build_markdown_form(data: dict) -> str:
-    lines = []
-    lines.append("# Solicitação de Análise — Amostras\n")
-    lines.append("## Solicitante")
-    lines.append(f"- **Nome:** {data['solicitante_nome']}")
-    if data.get("solicitante_email"):
-        lines.append(f"- **E-mail:** {data['solicitante_email']}")
-    if data.get("grupo"):
-        lines.append(f"- **Grupo/Unidade:** {data['grupo']}")
-    lines.append("\n## Detalhes da Solicitação")
-    lines.append(f"- **Motivo/Objetivo:** {data['motivo']}")
-    lines.append(f"- **Origem das amostras:** {data['origem_amostras']}")
-    lines.append(f"- **Urgência:** {data['urgencia']}")
-    lines.append(f"- **Consentimento Ético/Termos:** {data['etica']}")
-    if data.get("responsavel_tecnico"):
-        lines.append(f"- **Responsável técnico indicado:** {data['responsavel_tecnico']}")
-    lines.append("\n## Amostras")
-    if data["amostras"]:
-        lines.append("| # | Identificação | Volume | Data de Coleta | Observações |")
-        lines.append("|---|---------------|--------|----------------|-------------|")
-        for idx, s in enumerate(data["amostras"], 1):
-            lines.append(f"| {idx} | {s['id']} | {s['volume']} | {s['data_coleta']} | {s['obs']} |")
-    else:
-        lines.append("_Nenhuma amostra informada_")
-    lines.append("\n## Observações adicionais")
-    lines.append(data.get("observacoes") or "_—_")
-    lines.append("\n> Criado automaticamente via API.")
-    return "\n".join(lines)
-
-# --------- Subcomandos ---------
-
-def cmd_create(args):
-    test_key_or_exit()
-    solicitante_nome = ask("Nome do solicitante:")
-    solicitante_email = ask("E-mail do solicitante (opcional):", required=False)
-    grupo = ask("Grupo/Unidade/Projeto (opcional):", required=False)
-    motivo = ask("Motivo/objetivo da análise:")
-    origem_amostras = ask("Origem das amostras:")
-    n = ask_int("Quantas amostras? ", min_value=0, max_value=200, default=1)
-
-    amostras = []
-    for i in range(1, n + 1):
-        print(f" - Amostra {i}:")
-        s_id = ask("   Identificação/código da amostra:")
-        s_vol = ask("   Volume (ex.: 2 mL):", required=False, default="—")
-        s_data = ask("   Data de coleta (YYYY-MM-DD):", required=False, default=str(date.today()))
-        s_obs = ask("   Observações (opcional):", required=False, default="—")
-        amostras.append({"id": s_id, "volume": s_vol, "data_coleta": s_data, "obs": s_obs})
-
-    urgencia = ask("Urgência (Normal/Urgente):", required=False, default="Normal")
-    etica = ask("Consentimento/ética aprovado? (Sim/Não/Em análise):", required=False, default="Em análise")
-    responsavel_tecnico = ask("Responsável técnico (opcional):", required=False)
-    observacoes = ask("Observações adicionais (opcional):", required=False)
-
-    dados = {
-        "solicitante_nome": solicitante_nome,
-        "solicitante_email": solicitante_email,
-        "grupo": grupo,
-        "motivo": motivo,
-        "origem_amostras": origem_amostras,
-        "amostras": amostras,
-        "urgencia": urgencia,
-        "etica": etica,
-        "responsavel_tecnico": responsavel_tecnico,
-        "observacoes": observacoes,
-    }
-    body_md = build_markdown_form(dados)
-    title = f"[Agendamento] Análise — {origem_amostras} — {solicitante_nome} — {str(date.today())}"
-
-    exp_id = post_new_experiment()
-    patch_experiment(exp_id, {"title": title, "body": body_md, "date": str(date.today())})
-    print(f"✅ Experimento criado. ID: {exp_id}")
-    print(f"URL (aprox.): {ELAB_BASE.replace('/api/v2','')}/experiments/{exp_id}")
-
-def cmd_list(args):
-    test_key_or_exit()
-    list_experiments()
-
-def cmd_view(args):
-    test_key_or_exit()
-    view_experiment(args.id)
-
-def cmd_update(args):
-    test_key_or_exit()
-    payload = {}
-    if args.title:
-        payload["title"] = args.title
-    if args.date:
-        payload["date"] = args.date
-    if args.status:
-        payload["status"] = {"label": args.status}
-    if args.body:
-        payload["body"] = args.body
-    if args.body_file:
-        p = Path(args.body_file)
-        if not p.exists():
-            die(f"Arquivo não encontrado: {p}")
-        payload["body"] = p.read_text(encoding="utf-8")
-    if not payload:
-        die("Nenhum campo para atualizar. Informe --title/--date/--status/--body/--body-file.")
-    patch_experiment(args.id, payload)
-    print("✅ Atualizado.")
-
-def cmd_lock(args):
-    test_key_or_exit()
-    patch_experiment(args.id, {"locked": True})
-    print("✅ Registro marcado como locked=True.")
-
-def build_parser():
-    p = argparse.ArgumentParser(description="CLI de integração com API estilo eLabFTW (mock ou real).")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    sp = sub.add_parser("create", help="Criar experimento (interativo).")
-    sp.set_defaults(func=cmd_create)
-
-    sp = sub.add_parser("list", help="Listar experimentos.")
-    sp.set_defaults(func=cmd_list)
-
-    sp = sub.add_parser("view", help="Ver detalhes de um experimento.")
-    sp.add_argument("--id", type=int, required=True, help="ID do experimento.")
-    sp.set_defaults(func=cmd_view)
-
-    sp = sub.add_parser("update", help="Atualizar campos do experimento.")
-    sp.add_argument("--id", type=int, required=True)
-    sp.add_argument("--title")
-    sp.add_argument("--date", help="YYYY-MM-DD")
-    sp.add_argument("--status", help="Rótulo do status, ex.: Draft/Completed.")
-    sp.add_argument("--body", help="Texto do corpo (Markdown).")
-    sp.add_argument("--body-file", help="Arquivo com o corpo (Markdown).")
-    sp.set_defaults(func=cmd_update)
-
-    sp = sub.add_parser("lock", help="Marcar experimento como locked=True.")
-    sp.add_argument("--id", type=int, required=True)
-    sp.set_defaults(func=cmd_lock)
-
-    return p
+# ==============================
+# Menu simples (terminal)
+# ==============================
+def menu():
+    print("\n=== Plataforma Externa (CLI) ===")
+    print("1) Inicializar Passo 2 (ItemType + Template)")
+    print("2) Cadastrar paciente")
+    print("3) Marcar experimento (agendar)")
+    print("4) Ver status do experimento")
+    print("5) Sair")
+    return input("> Escolha: ").strip()
 
 def main():
-    parser = build_parser()
-    args = parser.parse_args()
-    args.func(args)
+    # init
+    api = ELab(ELAB_URL, ELAB_API_KEY)
+    db_init()
+
+    while True:
+        op = menu()
+
+        if op == "1":
+            try:
+                it_id = ensure_item_type_patient(api)
+                tpl_id = ensure_template(api)
+                print(f"[OK] Item Type '{ITEM_TYPE_TITLE}' id={it_id}")
+                print(f"[OK] Template '{TEMPLATE_TITLE}' id={tpl_id}")
+            except Exception as e:
+                print(f"[ERRO] {e}")
+
+        elif op == "2":
+            name = input("Nome do paciente: ").strip()
+            if not name:
+                print("Nome inválido."); continue
+            try:
+                it_id = ensure_item_type_patient(api)
+                item_id = create_patient_item(api, it_id, name)
+                pid = db_add_patient(name, item_id)
+                print(f"[OK] Paciente cadastrado (local_id={pid}) → item_id={item_id}")
+            except Exception as e:
+                print(f"[ERRO] {e}")
+
+        elif op == "3":
+            pid_str = input("ID local do paciente: ").strip()
+            agendamento_id = input("ID do agendamento: ").strip()
+            tipo_amostra = input("Tipo de amostra (ex.: Sangue): ").strip() or "Sangue"
+            if not pid_str.isdigit() or not agendamento_id:
+                print("Dados inválidos."); continue
+
+            pid = int(pid_str)
+            row = db_get_patient(pid)
+            if not row:
+                print("Paciente não encontrado."); continue
+
+            try:
+                _ = ensure_template(api)  # garante existência
+                title = f"Análises Paciente {pid} - {datetime.now().date().isoformat()}"
+                body_vars = {
+                    "agendamento_id": agendamento_id,
+                    "item_paciente_id": row["item_id"],
+                    "data_coleta": datetime.now().isoformat(timespec="minutes"),
+                    "tipo_amostra": tipo_amostra,
+                }
+                exp_id = create_experiment_from_template(api, title, body_vars)
+                link_experiment_to_item(api, exp_id, row["item_id"])
+                status = get_experiment_status(api, exp_id)
+                appt_id = db_add_appointment(pid, exp_id, status)
+                print(f"[OK] Experimento criado (id={exp_id}) e linkado ao paciente (item_id={row['item_id']}).")
+                print(f"[OK] Agendamento salvo (id={appt_id}) com status='{status}'.")
+            except Exception as e:
+                print(f"[ERRO] {e}")
+
+        elif op == "4":
+            exp_str = input("ID do experimento: ").strip()
+            if not exp_str.isdigit():
+                print("ID inválido."); continue
+            exp_id = int(exp_str)
+            try:
+                status = get_experiment_status(api, exp_id)
+                db_update_status(exp_id, status)
+                print(f"[OK] Status atual: {status}")
+            except Exception as e:
+                print(f"[ERRO] {e}")
+
+        elif op == "5":
+            print("Saindo.")
+            sys.exit(0)
+
+        else:
+            print("Opção inválida.")
+
 
 if __name__ == "__main__":
     main()
