@@ -47,7 +47,8 @@ Este projeto é uma aplicação que integra uma interface de usuário construíd
 
 1. Inicie o frontend com Streamlit:
    ```bash
-   streamlit run src/frontend/app.py
+   cd src/frontend
+   streamlit run app.py
    ```
 
 2. Acesse a interface no navegador em: [http://localhost:8501](http://localhost:8501).
@@ -56,7 +57,8 @@ Este projeto é uma aplicação que integra uma interface de usuário construíd
 
 1. Inicie o backend com FastAPI:
    ```bash
-   uvicorn src.backend.main:app --reload
+   cd src/backend
+   uvicorn main:app --reload
    ```
 
 2. Acesse a documentação interativa da API em: [http://localhost:8000/docs](http://localhost:8000/docs).
@@ -83,8 +85,9 @@ Este projeto é uma aplicação que integra uma interface de usuário construíd
 
 ### Variáveis de Configuração
 
-- **ELAB_URL**: URL base da API do eLabFTW.
-- **ELAB_API_KEY**: Chave de API gerada no perfil do usuário no eLabFTW.
+- **.env**: Criar um arquivo .env com a URL do elab e a chave de API.
+   - **ELAB_URL**: URL base da API do eLabFTW.
+   - **ELAB_API_KEY**: Chave de API gerada no perfil do usuário no eLabFTW.
 
 ## Contribuição
 
