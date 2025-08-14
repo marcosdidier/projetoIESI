@@ -2,10 +2,10 @@ import os
 from typing import List
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-from models import Base, User, Experiment
+from .models import Base, User, Experiment
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -48,6 +48,14 @@ def get_session_local():
     """Retorna SessionLocal"""
     engine = get_engine()
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def get_db():
+    SessionLocal = get_session_local()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 # ===== Bootstrap do banco =====
 def create_database_if_not_exists() -> bool:
@@ -119,42 +127,34 @@ def test_connection() -> bool:
         return False
 
 # ===== Operações =====
-def get_user_experiments(user_id: int) -> List[dict]:
+def get_user_experiments(db: Session, user_id: int) -> List[dict]:
     """Retorna experimentos de um usuário"""
     try:
-        SessionLocal = get_session_local()
-        with SessionLocal() as db:
-            experiments = db.query(Experiment).filter(Experiment.user_id == user_id).all()
-            return [{"id": e.id, "user_id": e.user_id, "created_at": e.created_at} for e in experiments]
+        experiments = db.query(Experiment).filter(Experiment.user_id == user_id).all()
+        return [{"id": e.id, "user_id": e.user_id, "created_at": e.created_at} for e in experiments]
     except Exception as e:
         print(f"❌ Erro ao buscar experimentos: {e}")
         return []
 
-def register_user(name: str, password: str) -> bool:
+def register_user(db: Session, name: str, password: str) -> bool:
     """Registra um novo usuário"""
     try:
-        SessionLocal = get_session_local()
-        with SessionLocal() as db:
-            # Verificar se já existe
-            if db.query(User).filter(User.name == name).first():
-                print(f"ℹ️ Usuário '{name}' já existe")
-                return True
-                
-            user = User(name=name, password=password)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-            print(f"✅ Usuário '{name}' criado (ID: {user.id})")
+        # Verificar se já existe
+        if db.query(User).filter(User.name == name).first():
+            print(f"ℹ️ Usuário '{name}' já existe")
             return True
+                
+        db.add(User(name=name, password=password))
+        db.commit()
+        print(f"✅ Usuário '{name}' criado")
+        return True
     except Exception as e:
         print(f"❌ Erro ao registrar usuário: {e}")
         return False
 
-def register_experiment(experiment_id: str, user_id: int) -> bool:
+def register_experiment(db: Session, experiment_id: str, user_id: int) -> bool:
     """Registra um novo experimento"""
     try:
-        SessionLocal = get_session_local()
-        with SessionLocal() as db:
             # Verificar se experimento já existe
             if db.query(Experiment).filter(Experiment.id == experiment_id).first():
                 print(f"ℹ️ Experimento '{experiment_id}' já existe")
@@ -165,29 +165,31 @@ def register_experiment(experiment_id: str, user_id: int) -> bool:
                 print(f"❌ Usuário com ID {user_id} não encontrado")
                 return False
                 
-            experiment = Experiment(id=experiment_id, user_id=user_id)
-            db.add(experiment)
+            db.add(Experiment(id=experiment_id, user_id=user_id))
             db.commit()
             print(f"✅ Experimento '{experiment_id}' criado para usuário {user_id}")
             return True
     except Exception as e:
         print(f"❌ Erro ao registrar experimento: {e}")
         return False
+    
+# ===== Testes =====
 
 # def create_sample_data():
 #     """Cria dados de exemplo para teste"""
 #     print("🔧 Criando dados de exemplo...")
-    
-#     # Criar usuários
-#     register_user("João Silva", "123456")
-#     register_user("Maria Santos", "abcdef")
-#     register_user("Pedro Costa", "qwerty")
-    
-#     # Criar experimentos
-#     register_experiment("EXP001", 1)
-#     register_experiment("EXP002", 1)
-#     register_experiment("EXP003", 2)
-#     register_experiment("EXP004", 3)
+#     SessionLocal = get_session_local()
+#     with SessionLocal() as db:
+#         # Criar usuários
+#         register_user(db, "A", "123456")
+#         register_user(db, "B", "abcdef")
+#         register_user(db, "C", "qwerty")
+        
+#         # Criar experimentos
+#         register_experiment(db, "EXP005", 1)
+#         register_experiment(db, "EXP006", 2)
+#         register_experiment(db, "EXP007", 3)
+#         register_experiment(db, "EXP008", 1)
     
 #     print("✅ Dados de exemplo criados!")
 
@@ -229,7 +231,7 @@ def register_experiment(experiment_id: str, user_id: int) -> bool:
 #         "debug": os.getenv("DEBUG", "false").lower() == "true"
 #     }
 
-# ===== Script principal =====
+# # ===== Script principal =====
 # if __name__ == "__main__":
 #     print("🚀 Iniciando setup do banco de dados...")
 #     print("=" * 60)
