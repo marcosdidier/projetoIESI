@@ -4,32 +4,11 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Body
 from typing import Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
-from schemas import PatientRequest, ExperimentRequest
-from database import get_db, register_experiment, init_database, test_connection
+from src.backend.database import get_db, init_database, test_connection
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
-
-import elab_service  # Nosso módulo que conversa com a API do eLabFTW
-
-# --- Modelos de Dados (Pydantic) ---
-# Define o formato esperado para os dados nas requisições,
-# garantindo validação automática e documentação.
-class ResearcherRequest(BaseModel):
-    """Corpo da requisição para cadastrar um novo pesquisador."""
-    name: str
-
-class ExperimentRequest(BaseModel):
-    """Corpo da requisição para criar um novo experimento."""
-    agendamento_id: str
-    item_pesquisador_id: int
-    display_name: str
-    tipo_amostra: str
-
-class ElabCredentials(BaseModel):
-    """Estrutura para agrupar as credenciais da API."""
-    url: str
-    api_key: str
-
+from src.backend.schemas import ResearcherRequest, ElabCredentials, ExperimentRequest
+import src.backend.elab_service as elab_service # Nosso módulo que conversa com a API do eLabFTW
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -69,6 +48,7 @@ app = FastAPI(
 # Endpoint para testar a conexão (usado no sidebar do front)
 @app.post("/test-connection", summary="Testa a Conexão com a API do eLabFTW")
 def test_elab_connection(
+    creds: ElabCredentials = Depends(get_elab_credentials),
     elab_url: str = Header(...),
     elab_api_key: str = Header(...)
 ):
