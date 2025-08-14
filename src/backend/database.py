@@ -157,22 +157,17 @@ def register_researcher(db: Session, name: str, password: str) -> bool:
         print(f"❌ Erro ao registrar Pesquisador: {e}")
         return False
 
-def register_experiment(db: Session, experiment_id: str, researcher_id: int) -> bool:
+def register_experiment(db: Session, researcher_id: int) -> bool:
     """Registra um novo experimento"""
     try:
-            # Verificar se experimento já existe
-            if db.query(Experiment).filter(Experiment.id == experiment_id).first():
-                print(f"ℹ️ Experimento '{experiment_id}' já existe")
-                return True
-                
             # Verificar se Pesquisador existe
             if not db.query(Researcher).filter(Researcher.id == researcher_id).first():
                 print(f"❌ Pesquisador com ID {researcher_id} não encontrado")
                 return False
                 
-            db.add(Experiment(id=experiment_id, researcher_id=researcher_id))
+            db.add(Experiment(researcher_id=researcher_id))
             db.commit()
-            print(f"✅ Experimento '{experiment_id}' criado para Pesquisador {researcher_id}")
+            print(f"✅ Experimento criado para Pesquisador {researcher_id}")
             return True
     except Exception as e:
         print(f"❌ Erro ao registrar experimento: {e}")
@@ -191,10 +186,10 @@ def create_sample_data():
         register_researcher(db, "F", "qwerty")
         
         # Criar experimentos
-        register_experiment(db, "EXP005", 4)
-        register_experiment(db, "EXP006", 5)
-        register_experiment(db, "EXP007", 6)
-        register_experiment(db, "EXP008", 4)
+        register_experiment(db, 4)
+        register_experiment(db, 5)
+        register_experiment(db, 6)
+        register_experiment(db, 4)
     
     print("✅ Dados de exemplo criados!")
 
