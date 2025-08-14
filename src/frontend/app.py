@@ -399,15 +399,9 @@ with tab3:
                 st.write("Nenhuma solicitação encontrada para este pesquisador.")
             else:
                 for idx, exp in enumerate(experiments_list):
-                    st.markdown(
-                        f"""
-                        <div style='background-color: white; padding: 12px; border-radius: 6px; border: 1px solid #ddd;'>
-                            <strong>Código de Agendamento:</strong> <code>{exp['id']}</code><br>
-                            <strong>ID do Experimento no eLab:</strong> <code>{exp['elab_experiment_id']}</code>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                    with st.container():
+                        st.markdown(f"**Código de Agendamento:** `{exp['id']}`")
+                        st.markdown(f"**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
 
                     # Adiciona divisor somente entre os blocos (não no último)
                     if idx < len(experiments_list) - 1:
