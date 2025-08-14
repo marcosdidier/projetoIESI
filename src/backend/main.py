@@ -28,7 +28,7 @@ app = FastAPI(
 
 # Endpoint para testar a conexão (usado no sidebar do front)
 @app.post("/test-connection")
-def test_connection(
+def test_elab_connection(
     elab_url: str = Header(...),
     elab_api_key: str = Header(...)
 ):
