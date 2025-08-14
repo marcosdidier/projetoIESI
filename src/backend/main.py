@@ -4,7 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, Header, Body
 from typing import Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
-from src.backend.database import get_db, init_database, test_connection
+from src.backend.database import get_db, init_database, test_connection, register_experiment, register_researcher
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from src.backend.schemas import ResearcherRequest, ElabCredentials, ExperimentRequest
