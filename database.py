@@ -2,24 +2,33 @@ import os
 from datetime import datetime
 from typing import List
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, text
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 # Carregar variáveis de ambiente
 from dotenv import load_dotenv
-load_dotenv()
+# Força usar os valores do .env mesmo se já houver variáveis no ambiente
+load_dotenv(override=True)
 
 # ===== Configurações do PostgreSQL (do .env) =====
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-DB_NAME = os.getenv("DB_NAME", "iesi_projeto")
+DB_HOST = os.getenv("DB_HOST", "localhost").strip()
+DB_PORT = os.getenv("DB_PORT", "5432").strip()
+DB_USER = os.getenv("DB_USER", "postgres").strip()
+DB_PASSWORD = os.getenv("DB_PASSWORD", "").strip()
+DB_NAME = os.getenv("DB_NAME", "iesi_projeto").strip()
+DB_SSLMODE = os.getenv("DB_SSLMODE", "disable" if DB_HOST in ("localhost", "127.0.0.1") else "require")
 
-# Construir URLs de conexão
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-ADMIN_DSN = f"host={DB_HOST} port={DB_PORT} user={DB_USER} password={DB_PASSWORD} dbname=postgres"
+# Construir URL de conexão: usa DATABASE_URL se existir; caso contrário, monta pelos campos
+DATABASE_URL = URL.create(
+    drivername="postgresql+psycopg2",
+    username=DB_USER,
+    password=DB_PASSWORD,
+    host=DB_HOST,
+    port=int(DB_PORT) if DB_PORT else None,
+    database=DB_NAME,
+)
 
 # Debug: mostrar configurações (sem senha)
 if os.getenv("DEBUG", "false").lower() == "true":
@@ -51,7 +60,12 @@ class Experiment(Base):
 # ===== Helpers de conexão =====
 def get_engine():
     """Retorna engine do SQLAlchemy com configurações do .env"""
-    return create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
+    return create_engine(
+        DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        connect_args={"sslmode": DB_SSLMODE},
+    )
 
 def get_session_local():
     """Retorna SessionLocal"""
@@ -62,8 +76,21 @@ def get_session_local():
 def create_database_if_not_exists() -> bool:
     """Cria o banco de dados se não existir"""
     try:
+        # Em provedores gerenciados (ex.: Supabase) não é permitido criar databases
+        if ".supabase.co" in (DB_HOST or ""):
+            print(f"ℹ️ Host gerenciado detectado ('{DB_HOST}'). Pulando criação/verificação de database.")
+            return True
+
         print(f"🔧 Conectando em postgres para criar banco '{DB_NAME}'...")
-        conn = psycopg2.connect(ADMIN_DSN)
+        # Conectar usando parâmetros para evitar problemas de parsing do DSN com caracteres especiais
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            dbname="postgres",
+            sslmode=DB_SSLMODE,
+        )
         conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
         cur = conn.cursor()
         
