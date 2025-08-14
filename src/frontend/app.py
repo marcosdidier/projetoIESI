@@ -63,6 +63,9 @@ if "last_consulted_id" not in st.session_state:
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
+if "initialized_elab" not in st.session_state:
+    st.session_state.initialized_elab = False
+
 # =========================
 # Funções de Comunicação com o Backend
 # =========================
@@ -205,10 +208,10 @@ with tab1:
     with st.form("form_experiment"):
         researchers_in_session = list(st.session_state.researchers_session.keys()) #
         nome_pesquisador_selecionado = st.selectbox(
-            "Pesquisador (carregados do banco)",
+            "Pesquisador",
             options=sorted(researchers_in_session),
             index=None,
-            placeholder="Escolha um pesquisador..."
+            placeholder="Selecione um pesquisador..."
         )
         
         c1, c2 = st.columns(2)
@@ -261,57 +264,67 @@ with tab1:
 # ABA 2: ACOMPANHAMENTO E LAUDOS
 # =========================
 with tab2:
-    st.header("Acompanhamento e Laudo da Análise")
+    st.subheader("Acompanhamento e laudo")
+    st.caption("Consulte o status e gere o PDF do laudo quando concluído.")
 
-    agendamentos_existentes = list(st.session_state.agendamentos.keys())
-    ag_key_selecionado = st.selectbox(
-        "Selecione o ID de Referência da solicitação",
-        options=sorted(agendamentos_existentes, reverse=True),
-        index=None,
-        placeholder="Escolha uma solicitação para consultar..."
-    )
+    with st.form("consultar_form"):
+        ag_key_input = st.text_input(
+            "Código de Referência do Laudo",
+            placeholder="Informe o código externo cadastrado (ex.: PROJ-X-001)",
+        )
+        consultar = st.form_submit_button("Consultar", use_container_width=True)
 
-    if st.button("Consultar Status", use_container_width=True, disabled=not ag_key_selecionado):
-        st.session_state.last_consulted_id = ag_key_selecionado
+    if consultar:
+        st.session_state.last_consulted_id = ag_key_input.strip()
         st.session_state.pdf_info = {"bytes": None, "name": None}
 
     if st.session_state.last_consulted_id:
         ag_key = st.session_state.last_consulted_id
-        if ag_key not in st.session_state.agendamentos:
-            st.error(f"ID de Referência '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
+        if not ag_key:
+            st.warning("Informe um código de referência para consultar.")
+        elif ag_key not in st.session_state.agendamentos:
+            st.error(f"Código de referência '{ag_key}' não foi encontrado nesta sessão.")
         else:
             exp_id = st.session_state.agendamentos[ag_key]
-            st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
+            st.success(f"Código de Agendamento: {ag_key}  |  ID do Experimento no eLab: {exp_id}")
             try:
                 status = api_get_status(api_headers, exp_id)
-                status_messages = {
-                    'None': ("Pendente", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
-                    '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
+                status_map = {
+                    "None": ("Pendente", "🔄"),
+                    "1": ("Em andamento", "⏳"),
+                    "2": ("Concluída", "✅"),
+                    "3": ("Requer reavaliação", "⚠️"),
+                    "4": ("Falhou", "❌"),
                 }
-                status_label, status_icon = status_messages.get(status, (status, "❓"))
-                st.metric(label="Status da Análise", value=status_label, delta=status_icon)
+                status_label, status_icon = status_map.get(status, ("Desconhecido", "❓"))
+                st.metric(label="Status da análise", value=status_label, delta=status_icon)
 
-                if status == '2':
+                if status == "2":  # concluída → oferece o PDF
                     st.divider()
-                    st.subheader("Gerar Laudo em PDF")
-                    include_changelog = st.checkbox("Incluir histórico de alterações no PDF")
+                    st.subheader("Laudo em PDF")
+                    include_changelog = st.checkbox("Incluir histórico de alterações (changelog)")
                     if st.button("Gerar PDF", type="primary", use_container_width=True):
-                        with st.spinner("Gerando PDF..."):
-                            try:
-                                pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
-                                st.session_state.pdf_info["bytes"] = pdf_bytes
-                                st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
-                            except requests.exceptions.RequestException as e:
-                                handle_api_error(e, "Gerar PDF")
+                        try:
+                            pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
+                            st.session_state.pdf_info["bytes"] = pdf_bytes
+                            st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
+                            st.toast("Laudo gerado.", icon="📄")
+                        except requests.exceptions.RequestException as e:
+                            handle_api_error(e, "Gerar PDF")
                 else:
-                    st.info("A página será atualizada automaticamente a cada 30 segundos para verificar o status.")
+                    st.info("A página será atualizada automaticamente a cada 30 segundos para refletir mudanças de status.")
                     st_autorefresh(interval=30 * 1000, key="status_refresh")
             except requests.exceptions.RequestException as e:
                 handle_api_error(e, f"Consultar Status (ID: {ag_key})")
-    
+
     if st.session_state.pdf_info.get("bytes"):
-        st.download_button(label="⬇️ Baixar Laudo Gerado", data=st.session_state.pdf_info["bytes"],
-                           file_name=st.session_state.pdf_info["name"], mime="application/pdf", use_container_width=True)
+        st.download_button(
+            label="⬇️ Baixar laudo",
+            data=st.session_state.pdf_info["bytes"],
+            file_name=st.session_state.pdf_info["name"],
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 # =========================
 # ABA 3: ADMINISTRAÇÃO
