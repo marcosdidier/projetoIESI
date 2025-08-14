@@ -21,7 +21,6 @@ import numpy as np
 # =========================
 
 def gradient_bar(height: int = 6, width: int = 1200):
-    """Barra de separação em degradê renderizada como imagem."""
     left = np.array([252, 76, 76], dtype=np.float32)
     right = np.array([255, 255, 124], dtype=np.float32)
     x = np.linspace(0.0, 1.0, width, dtype=np.float32).reshape(1, width, 1)
@@ -64,6 +63,8 @@ if "last_consulted_id" not in st.session_state:
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
+if "initialized_elab" not in st.session_state:
+    st.session_state.initialized_elab = False
 
 # =========================
 # Funções de Comunicação com o Backend
@@ -121,12 +122,24 @@ def api_initialize(headers: Dict) -> None:
     response.raise_for_status()
     st.success("Estruturas essenciais verificadas com sucesso no eLabFTW!")
 
+if not st.session_state.initialized_elab:
+    if not ELAB_URL or not API_KEY:
+        st.session_state.initialized_elab = False
+        st.warning("Defina ELAB_URL e API_KEY no seu .env para inicializar o ambiente.")
+    else:
+        try:
+            api_initialize(api_headers)
+            st.session_state.initialized_elab = True
+            st.toast("Estruturas essenciais verificadas.", icon="✅")
+        except requests.exceptions.RequestException as e:
+            st.session_state.initialized_elab = False
+            handle_api_error(e, "Inicializar Ambiente")
 
 # =========================
 # Interface Principal (UI)
 # =========================
 
-st.set_page_config(page_title="Plataforma de Pesquisa • LIACLI", page_icon="🔬", layout="centered")
+st.set_page_config(page_title="Plataforma de Pesquisa | LIACLI", page_icon="🔬", layout="centered")
 st.title("Portal de Integração | LIACLI")
 st.caption("Fluxo Integrado de Solicitações e Gestão Laboratorial via eLabFTW")
 gradient_bar()
@@ -154,9 +167,9 @@ if not st.session_state.data_loaded:
 
 # --- ABAS PARA ORGANIZAR O FLUXO ---
 tab1, tab2, tab3 = st.tabs([
-    " Nova Solicitação de Análise ",
-    " Acompanhamento e Laudos ",
-    " Administração "
+    "Nova Solicitação de Análise",
+    "Acompanhamento e Laudos",
+    "Administração"
 ])
 
 # =========================
@@ -195,35 +208,35 @@ with tab1:
     with st.form("form_experiment"):
         researchers_in_session = list(st.session_state.researchers_session.keys()) #
         nome_pesquisador_selecionado = st.selectbox(
-            "Pesquisador (carregados do banco)",
+            "Pesquisador",
             options=sorted(researchers_in_session),
             index=None,
-            placeholder="Escolha um pesquisador..."
+            placeholder="Selecione um pesquisador..."
         )
         
         c1, c2 = st.columns(2)
         with c1:
             agendamento_id = st.text_input("ID de Referência (Agendamento)", help="Código único para referência externa. Ex: 'PROJ-X-001'", placeholder="PROJ-X-001")
         with c2:
-            tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue Total", help="Ex.: Sangue Total, Soro, Plasma, etc.")
+            tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue", help="Ex.: Sangue, Soro, Plasma, etc.")
 
         if st.form_submit_button("Criar Solicitação no eLabFTW", type="primary", use_container_width=True):
             if not nome_pesquisador_selecionado:
                 st.error("Selecione um pesquisador da lista.")
             elif not agendamento_id.strip():
                 st.error("O ID de Referência (Agendamento) é obrigatório.")
-            elif agendamento_id.strip() in st.session_state.agendamentos: #
+            elif agendamento_id.strip() in st.session_state.agendamentos:
                 st.error("Este ID de Referência já foi usado. Crie um novo.")
             else:
                 try:
-                    researcher_info = st.session_state.researchers_session[nome_pesquisador_selecionado] #
-                    local_id = researcher_info["id"] #
-                    elab_item_id = researcher_info.get("elab_item_id") #
+                    researcher_info = st.session_state.researchers_session[nome_pesquisador_selecionado]
+                    local_id = researcher_info["id"]
+                    elab_item_id = researcher_info.get("elab_item_id")
 
                     with st.spinner("Criando solicitação no eLabFTW..."):
                         json_body = {
                             "agendamento_id": agendamento_id.strip(),
-                            "researcher_id": local_id, #
+                            "researcher_id": local_id,
                             "item_pesquisador_id": elab_item_id or 0,
                             "display_name": nome_pesquisador_selecionado.strip(),
                             "tipo_amostra": tipo_amostra.strip() or "Não informado",
@@ -251,57 +264,67 @@ with tab1:
 # ABA 2: ACOMPANHAMENTO E LAUDOS
 # =========================
 with tab2:
-    st.header("Acompanhamento e Laudo da Análise")
+    st.subheader("Acompanhamento e laudo")
+    st.caption("Consulte o status e gere o PDF do laudo quando concluído.")
 
-    agendamentos_existentes = list(st.session_state.agendamentos.keys()) #
-    ag_key_selecionado = st.selectbox(
-        "Selecione o ID de Referência da solicitação",
-        options=sorted(agendamentos_existentes, reverse=True),
-        index=None,
-        placeholder="Escolha uma solicitação para consultar..."
-    )
+    with st.form("consultar_form"):
+        ag_key_input = st.text_input(
+            "Código de Referência do Laudo",
+            placeholder="Informe o código externo cadastrado (ex.: PROJ-X-001)",
+        )
+        consultar = st.form_submit_button("Consultar", use_container_width=True)
 
-    if st.button("Consultar Status", use_container_width=True, disabled=not ag_key_selecionado):
-        st.session_state.last_consulted_id = ag_key_selecionado
+    if consultar:
+        st.session_state.last_consulted_id = ag_key_input.strip()
         st.session_state.pdf_info = {"bytes": None, "name": None}
 
     if st.session_state.last_consulted_id:
         ag_key = st.session_state.last_consulted_id
-        if ag_key not in st.session_state.agendamentos:
-            st.error(f"ID de Referência '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
+        if not ag_key:
+            st.warning("Informe um código de referência para consultar.")
+        elif ag_key not in st.session_state.agendamentos:
+            st.error(f"Código de referência '{ag_key}' não foi encontrado nesta sessão.")
         else:
-            exp_id = st.session_state.agendamentos[ag_key] #
-            st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
+            exp_id = st.session_state.agendamentos[ag_key]
+            st.success(f"Código de Agendamento: {ag_key}  |  ID do Experimento no eLab: {exp_id}")
             try:
                 status = api_get_status(api_headers, exp_id)
-                status_messages = {
-                    'None': ("Pendente", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
-                    '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
+                status_map = {
+                    "None": ("Pendente", "🔄"),
+                    "1": ("Em andamento", "⏳"),
+                    "2": ("Concluída", "✅"),
+                    "3": ("Requer reavaliação", "⚠️"),
+                    "4": ("Falhou", "❌"),
                 }
-                status_label, status_icon = status_messages.get(status, (status, "❓"))
-                st.metric(label="Status da Análise", value=status_label, delta=status_icon)
+                status_label, status_icon = status_map.get(status, ("Desconhecido", "❓"))
+                st.metric(label="Status da análise", value=status_label, delta=status_icon)
 
-                if status == '2':
+                if status == "2":  # concluída → oferece o PDF
                     st.divider()
-                    st.subheader("Gerar Laudo em PDF")
-                    include_changelog = st.checkbox("Incluir histórico de alterações no PDF")
+                    st.subheader("Laudo em PDF")
+                    include_changelog = st.checkbox("Incluir histórico de alterações (changelog)")
                     if st.button("Gerar PDF", type="primary", use_container_width=True):
-                        with st.spinner("Gerando PDF..."):
-                            try:
-                                pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
-                                st.session_state.pdf_info["bytes"] = pdf_bytes
-                                st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
-                            except requests.exceptions.RequestException as e:
-                                handle_api_error(e, "Gerar PDF")
+                        try:
+                            pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
+                            st.session_state.pdf_info["bytes"] = pdf_bytes
+                            st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
+                            st.toast("Laudo gerado.", icon="📄")
+                        except requests.exceptions.RequestException as e:
+                            handle_api_error(e, "Gerar PDF")
                 else:
-                    st.info("A página será atualizada automaticamente a cada 30 segundos para verificar o status.")
+                    st.info("A página será atualizada automaticamente a cada 30 segundos para refletir mudanças de status.")
                     st_autorefresh(interval=30 * 1000, key="status_refresh")
             except requests.exceptions.RequestException as e:
                 handle_api_error(e, f"Consultar Status (ID: {ag_key})")
-    
+
     if st.session_state.pdf_info.get("bytes"):
-        st.download_button(label="⬇️ Baixar Laudo Gerado", data=st.session_state.pdf_info["bytes"],
-                           file_name=st.session_state.pdf_info["name"], mime="application/pdf", use_container_width=True)
+        st.download_button(
+            label="⬇️ Baixar laudo",
+            data=st.session_state.pdf_info["bytes"],
+            file_name=st.session_state.pdf_info["name"],
+            mime="application/pdf",
+            use_container_width=True,
+        )
 
 # =========================
 # ABA 3: ADMINISTRAÇÃO
@@ -342,19 +365,7 @@ with tab3:
     st.divider()
     # --- FIM DO NOVO BLOCO ---
 
-
-    st.subheader("Verificação Manual de Estruturas no eLabFTW")
-    st.markdown("Esta ação verifica se o **Tipo de Item 'Pesquisador'** existe no seu eLabFTW. Se não existir, ele será criado.")
-    if st.button("Verificar Estruturas", use_container_width=True):
-        try:
-            with st.spinner("Verificando..."):
-                api_initialize(api_headers)
-        except requests.exceptions.RequestException as e:
-            handle_api_error(e, "Inicializar Ambiente")
-
-    st.divider()
-
-    st.subheader("Dados da Sessão Atual (Carregados do Banco)")
+    st.subheader("Dados do Banco")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Pesquisadores**")
@@ -365,7 +376,7 @@ with tab3:
 
     st.divider()
     
-    st.header("🔗 Visualizar Experimentos por Pesquisador")
+    st.header("Experimentos por Pesquisador")
     researcher_names = list(st.session_state.researchers_session.keys())
     
     if not researcher_names:
@@ -387,9 +398,16 @@ with tab3:
             if not experiments_list:
                 st.write("Nenhuma solicitação encontrada para este pesquisador.")
             else:
-                for exp in experiments_list:
-                    st.info(f"**ID da Referência (Agendamento):** `{exp['id']}`\n\n**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
+                for idx, exp in enumerate(experiments_list):
+                    with st.container():
+                        st.markdown(f"**Código de Agendamento:** `{exp['id']}`")
+                        st.markdown(f"**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
 
+                    # Adiciona divisor somente entre os blocos (não no último)
+                    if idx < len(experiments_list) - 1:
+                        st.write("")
+
+st.write("")
 # =========================
 # Rodapé
 # =========================
