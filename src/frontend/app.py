@@ -37,8 +37,8 @@ api_headers: Dict[str, str] = {
 
 def gradient_bar(height: int = 6, width: int = 1200):
     """Barra de separação em degradê (laranja → amarelo) renderizada como imagem."""
-    left = np.array([255, 165, 0], dtype=np.float32)   # laranja
-    right = np.array([255, 255, 0], dtype=np.float32)  # amarelo
+    left = np.array([252, 76, 76], dtype=np.float32)   # laranja
+    right = np.array([255, 255, 124], dtype=np.float32)  # amarelo
     x = np.linspace(0.0, 1.0, width, dtype=np.float32).reshape(1, width, 1)
     grad = (left * (1 - x) + right * x).astype(np.uint8)
     bar = np.repeat(grad, height, axis=0)
