@@ -34,23 +34,30 @@ DATABASE_URL = URL.create(
 #     print(f"  • User: {DB_USER}")
 #     print(f"  • Database: {DB_NAME}")
 
-# ===== Helpers de conexão =====
-def get_engine():
-    """Retorna engine do SQLAlchemy com configurações do .env"""
-    return create_engine(
+ENGINE = create_engine(
         DATABASE_URL,
         echo=False,
         pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        pool_recycle=1800,
         connect_args={"sslmode": DB_SSLMODE},
     )
 
+SessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, bind=ENGINE
+)
+
+# ===== Helpers de conexão =====
+def get_engine():
+    """Retorna engine do SQLAlchemy com configurações do .env"""
+    return ENGINE
+
 def get_session_local():
     """Retorna SessionLocal"""
-    engine = get_engine()
-    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    return SessionLocal
 
 def get_db():
-    SessionLocal = get_session_local()
     db = SessionLocal()
     try:
         yield db
@@ -103,8 +110,7 @@ def init_database() -> bool:
     """Cria as tabelas"""
     try:
         print(f"🔧 Criando tabelas no banco '{DB_NAME}'...")
-        engine = get_engine()
-        Base.metadata.create_all(bind=engine)
+        Base.metadata.create_all(bind=ENGINE)
         print("✅ Tabelas criadas/validadas com sucesso!")
         return True
     except Exception as e:
@@ -115,8 +121,7 @@ def test_connection() -> bool:
     """Testa a conexão com o banco"""
     try:
         print(f"🔧 Testando conexão com '{DB_NAME}'...")
-        engine = get_engine()
-        with engine.connect() as conn:
+        with ENGINE.connect() as conn:
             conn.execute(text("SELECT 1"))
         print("✅ Conexão com PostgreSQL bem-sucedida!")
         return True

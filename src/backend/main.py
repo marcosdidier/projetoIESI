@@ -1,8 +1,10 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException, Header, Body
+from fastapi import FastAPI, HTTPException, Header, Body, Depends
 from typing import Dict, Any
-import elab_service  # Importa o nosso módulo de serviço
+import elab_service
 from schemas import PatientRequest, ExperimentRequest
+from database import get_db, register_experiment
+from sqlalchemy.orm import Session
 
 app = FastAPI(
     title="LIACLI Backend API",
@@ -43,7 +45,8 @@ def initialize_elab(
 def create_patient(
     request: PatientRequest,
     elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
+    elab_api_key: str = Header(...),
+    db: Session = Depends(get_db)
 ):
     try:
         item_id = elab_service.register_patient(elab_url, elab_api_key, True, request.name)
@@ -56,7 +59,8 @@ def create_patient(
 def create_new_experiment(
     request: ExperimentRequest,
     elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
+    elab_api_key: str = Header(...),
+    db: Session = Depends(get_db)
 ):
     try:
         # Lógica para criar o título e o dicionário de variáveis
