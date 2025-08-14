@@ -2,18 +2,7 @@
 from fastapi import FastAPI, HTTPException, Header, Body
 from typing import Dict, Any
 import elab_service  # Importa o nosso módulo de serviço
-
-# Define os modelos de dados para a API (ajuda na documentação e validação)
-from pydantic import BaseModel
-
-class PatientRequest(BaseModel):
-    name: str
-
-class ExperimentRequest(BaseModel):
-    agendamento_id: str
-    item_paciente_id: int
-    display_name: str
-    tipo_amostra: str
+from schemas import PatientRequest, ExperimentRequest
 
 app = FastAPI(
     title="LIACLI Backend API",

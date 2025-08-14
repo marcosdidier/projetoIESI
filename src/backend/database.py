@@ -1,18 +1,15 @@
 import os
-from datetime import datetime
 from typing import List
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
-from sqlalchemy.orm import sessionmaker, relationship, declarative_base
+from sqlalchemy.orm import sessionmaker
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-
-# Carregar variáveis de ambiente
+from models import Base, User, Experiment
 from dotenv import load_dotenv
-# Força usar os valores do .env mesmo se já houver variáveis no ambiente
+
 load_dotenv(override=True)
 
-# ===== Configurações do PostgreSQL (do .env) =====
 DB_HOST = os.getenv("DB_HOST", "localhost").strip()
 DB_PORT = os.getenv("DB_PORT", "5432").strip()
 DB_USER = os.getenv("DB_USER", "postgres").strip()
@@ -20,7 +17,6 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "").strip()
 DB_NAME = os.getenv("DB_NAME", "iesi_projeto").strip()
 DB_SSLMODE = os.getenv("DB_SSLMODE", "disable" if DB_HOST in ("localhost", "127.0.0.1") else "require")
 
-# Construir URL de conexão: usa DATABASE_URL se existir; caso contrário, monta pelos campos
 DATABASE_URL = URL.create(
     drivername="postgresql+psycopg2",
     username=DB_USER,
@@ -30,32 +26,13 @@ DATABASE_URL = URL.create(
     database=DB_NAME,
 )
 
-# Debug: mostrar configurações (sem senha)
-if os.getenv("DEBUG", "false").lower() == "true":
-    print(f"🔧 Configurações carregadas:")
-    print(f"  • Host: {DB_HOST}")
-    print(f"  • Port: {DB_PORT}")
-    print(f"  • User: {DB_USER}")
-    print(f"  • Database: {DB_NAME}")
-
-# ===== Base SQLAlchemy =====
-Base = declarative_base()
-
-# ===== Modelos =====
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True)
-    password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    experiments = relationship("Experiment", back_populates="user", cascade="all, delete-orphan")
-
-class Experiment(Base):
-    __tablename__ = "experiments"
-    id = Column(String, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    user = relationship("User", back_populates="experiments")
+# # Debug: mostrar configurações (sem senha)
+# if os.getenv("DEBUG", "false").lower() == "true":
+#     print(f"🔧 Configurações carregadas:")
+#     print(f"  • Host: {DB_HOST}")
+#     print(f"  • Port: {DB_PORT}")
+#     print(f"  • User: {DB_USER}")
+#     print(f"  • Database: {DB_NAME}")
 
 # ===== Helpers de conexão =====
 def get_engine():
@@ -197,98 +174,98 @@ def register_experiment(experiment_id: str, user_id: int) -> bool:
         print(f"❌ Erro ao registrar experimento: {e}")
         return False
 
-def create_sample_data():
-    """Cria dados de exemplo para teste"""
-    print("🔧 Criando dados de exemplo...")
+# def create_sample_data():
+#     """Cria dados de exemplo para teste"""
+#     print("🔧 Criando dados de exemplo...")
     
-    # Criar usuários
-    register_user("João Silva", "123456")
-    register_user("Maria Santos", "abcdef")
-    register_user("Pedro Costa", "qwerty")
+#     # Criar usuários
+#     register_user("João Silva", "123456")
+#     register_user("Maria Santos", "abcdef")
+#     register_user("Pedro Costa", "qwerty")
     
-    # Criar experimentos
-    register_experiment("EXP001", 1)
-    register_experiment("EXP002", 1)
-    register_experiment("EXP003", 2)
-    register_experiment("EXP004", 3)
+#     # Criar experimentos
+#     register_experiment("EXP001", 1)
+#     register_experiment("EXP002", 1)
+#     register_experiment("EXP003", 2)
+#     register_experiment("EXP004", 3)
     
-    print("✅ Dados de exemplo criados!")
+#     print("✅ Dados de exemplo criados!")
 
-def show_data():
-    """Mostra os dados no banco"""
-    try:
-        SessionLocal = get_session_local()
-        with SessionLocal() as db:
-            print("\n📊 Dados no banco:")
-            print("=" * 50)
+# def show_data():
+#     """Mostra os dados no banco"""
+#     try:
+#         SessionLocal = get_session_local()
+#         with SessionLocal() as db:
+#             print("\n📊 Dados no banco:")
+#             print("=" * 50)
             
-            # Usuários
-            users = db.query(User).all()
-            print(f"\n👥 Usuários ({len(users)}):")
-            for user in users:
-                print(f"  • ID: {user.id} | Nome: {user.name} | Criado: {user.created_at}")
+#             # Usuários
+#             users = db.query(User).all()
+#             print(f"\n👥 Usuários ({len(users)}):")
+#             for user in users:
+#                 print(f"  • ID: {user.id} | Nome: {user.name} | Criado: {user.created_at}")
             
-            # Experimentos
-            experiments = db.query(Experiment).all()
-            print(f"\n🧪 Experimentos ({len(experiments)}):")
-            for exp in experiments:
-                owner = db.query(User).get(exp.user_id)
-                owner_name = owner.name if owner else "Usuário não encontrado"
-                print(f"  • ID: {exp.id} | Usuário: {owner_name} | Criado: {exp.created_at}")
+#             # Experimentos
+#             experiments = db.query(Experiment).all()
+#             print(f"\n🧪 Experimentos ({len(experiments)}):")
+#             for exp in experiments:
+#                 owner = db.query(User).get(exp.user_id)
+#                 owner_name = owner.name if owner else "Usuário não encontrado"
+#                 print(f"  • ID: {exp.id} | Usuário: {owner_name} | Criado: {exp.created_at}")
             
-            print("\n" + "=" * 50)
-    except Exception as e:
-        print(f"❌ Erro ao mostrar dados: {e}")
+#             print("\n" + "=" * 50)
+#     except Exception as e:
+#         print(f"❌ Erro ao mostrar dados: {e}")
 
-def get_env_info() -> dict:
-    """Retorna informações das variáveis de ambiente (para debug)"""
-    return {
-        "db_host": DB_HOST,
-        "db_port": DB_PORT,
-        "db_user": DB_USER,
-        "db_name": DB_NAME,
-        "has_password": bool(DB_PASSWORD),
-        "app_env": os.getenv("APP_ENV", "production"),
-        "debug": os.getenv("DEBUG", "false").lower() == "true"
-    }
+# def get_env_info() -> dict:
+#     """Retorna informações das variáveis de ambiente (para debug)"""
+#     return {
+#         "db_host": DB_HOST,
+#         "db_port": DB_PORT,
+#         "db_user": DB_USER,
+#         "db_name": DB_NAME,
+#         "has_password": bool(DB_PASSWORD),
+#         "app_env": os.getenv("APP_ENV", "production"),
+#         "debug": os.getenv("DEBUG", "false").lower() == "true"
+#     }
 
 # ===== Script principal =====
-if __name__ == "__main__":
-    print("🚀 Iniciando setup do banco de dados...")
-    print("=" * 60)
+# if __name__ == "__main__":
+#     print("🚀 Iniciando setup do banco de dados...")
+#     print("=" * 60)
     
-    # Mostrar configurações se debug estiver ativo
-    if os.getenv("DEBUG", "false").lower() == "true":
-        env_info = get_env_info()
-        print(f"🔧 Ambiente: {env_info['app_env']}")
-        print(f"🔧 Debug: {env_info['debug']}")
+#     # Mostrar configurações se debug estiver ativo
+#     if os.getenv("DEBUG", "false").lower() == "true":
+#         env_info = get_env_info()
+#         print(f"🔧 Ambiente: {env_info['app_env']}")
+#         print(f"🔧 Debug: {env_info['debug']}")
     
-    # 1) Criar banco se não existir
-    if not create_database_if_not_exists():
-        print("❌ Falha ao criar/verificar banco")
-        raise SystemExit(1)
+#     # 1) Criar banco se não existir
+#     if not create_database_if_not_exists():
+#         print("❌ Falha ao criar/verificar banco")
+#         raise SystemExit(1)
 
-    # 2) Criar tabelas
-    if not init_database():
-        print("❌ Falha ao criar tabelas")
-        raise SystemExit(1)
+#     # 2) Criar tabelas
+#     if not init_database():
+#         print("❌ Falha ao criar tabelas")
+#         raise SystemExit(1)
 
-    # 3) Testar conexão
-    if not test_connection():
-        print("❌ Falha na conexão")
-        raise SystemExit(1)
+#     # 3) Testar conexão
+#     if not test_connection():
+#         print("❌ Falha na conexão")
+#         raise SystemExit(1)
 
-    # 4) Criar dados de exemplo e mostrar
-    create_sample_data()
-    show_data()
+#     # 4) Criar dados de exemplo e mostrar
+#     create_sample_data()
+#     show_data()
 
-    print("\n✅ Setup completo!")
-    print(f"  • Host: {DB_HOST}:{DB_PORT}")
-    print(f"  • Banco: {DB_NAME}")
-    print(f"  • Usuário: {DB_USER}")
-    print("\n🔧 Para conectar no Beekeeper Studio:")
-    print(f"  • Host: {DB_HOST}")
-    print(f"  • Port: {DB_PORT}")
-    print(f"  • Database: {DB_NAME}")
-    print(f"  • Username: {DB_USER}")
-    print(f"  • Password: [sua senha do .env]")
+#     print("\n✅ Setup completo!")
+#     print(f"  • Host: {DB_HOST}:{DB_PORT}")
+#     print(f"  • Banco: {DB_NAME}")
+#     print(f"  • Usuário: {DB_USER}")
+#     print("\n🔧 Para conectar no Beekeeper Studio:")
+#     print(f"  • Host: {DB_HOST}")
+#     print(f"  • Port: {DB_PORT}")
+#     print(f"  • Database: {DB_NAME}")
+#     print(f"  • Username: {DB_USER}")
+#     print(f"  • Password: [sua senha do .env]")
