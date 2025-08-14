@@ -139,7 +139,7 @@ if not st.session_state.initialized_elab:
 # Header
 # -------------------------
 st.title("Portal de Integração | LIACLI")
-st.caption("Gestão formal de solicitações de análise e integração com eLabFTW.")
+st.caption("Fluxo Integrado de Solicitações e Gestão Laboratorial via eLabFTW")
 gradient_bar()
 
 # -------------------------
