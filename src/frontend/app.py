@@ -156,7 +156,7 @@ if not st.session_state.data_loaded:
 tab1, tab2, tab3 = st.tabs([
     " Nova Solicitação de Análise ",
     " Acompanhamento e Laudos ",
-    " ⚙️ Administração "
+    " Administração "
 ])
 
 # =========================
