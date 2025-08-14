@@ -62,7 +62,7 @@ def get_elab_credentials(
 app = FastAPI(
     title="LIACLI Backend API",
     description="API que serve como um gateway inteligente para o eLabFTW, simplificando operações comuns.",
-    version="1.1.0" # Versão atualizada para refletir a refatoração
+    version="1.1.0", # Versão atualizada para refletir a refatoração
     lifespan=lifespan
 )
 
