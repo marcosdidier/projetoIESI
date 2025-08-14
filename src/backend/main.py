@@ -80,7 +80,12 @@ def create_researcher(
 ):
     try:
         item_id = elab_service.register_researcher(creds.url, creds.api_key, True, request.name)
-        return {"name": request.name, "item_id": item_id}
+
+        if register_researcher(db, request.name, "__external__"):
+            return {"name": request.name, "item_id": item_id}
+        else:
+            raise HTTPException(status_code=400, detail="Falha ao registrar pesquisador no banco de dados.")
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -108,6 +113,7 @@ def create_new_experiment(
         exp_id = elab_service.create_experiment(creds.url, creds.api_key, True, title, vars_dict)
         elab_service.link_experiment_to_item(creds.url, creds.api_key, True, exp_id, request.item_pesquisador_id)
         status = elab_service.get_status(creds.url, creds.api_key, True, exp_id)
+        
         return {"agendamento_id": request.agendamento_id, "experiment_id": exp_id, "status": status}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

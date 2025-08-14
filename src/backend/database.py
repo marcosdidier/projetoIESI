@@ -148,9 +148,11 @@ def register_researcher(db: Session, name: str, password: str) -> bool:
         if db.query(Researcher).filter(Researcher.name == name).first():
             print(f"ℹ️ Pesquisador '{name}' já existe")
             return True
-                
-        db.add(Researcher(name=name, password=password))
+
+        new_researcher = Researcher(name=name, password=password)
+        db.add(new_researcher)
         db.commit()
+        db.refresh(new_researcher)
         print(f"✅ Pesquisador '{name}' criado")
         return True
     except Exception as e:
@@ -165,8 +167,10 @@ def register_experiment(db: Session, researcher_id: int) -> bool:
                 print(f"❌ Pesquisador com ID {researcher_id} não encontrado")
                 return False
                 
-            db.add(Experiment(researcher_id=researcher_id))
-            db.commit()
+            new_experiment = Experiment(researcher_id=researcher_id)
+            db.add(new_experiment)
+            db.commit()  # Commit para garantir que o experimento seja salvo no banco
+            db.refresh(new_experiment)  # Refresca o objeto com os dados atualizados do banco (incluindo ID)
             print(f"✅ Experimento criado para Pesquisador {researcher_id}")
             return True
     except Exception as e:
