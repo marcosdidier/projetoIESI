@@ -12,14 +12,14 @@ import requests
 # =========================
 TIMEOUT = 30  # seg por requisição
 
-ITEM_TYPE_TITLE = "Paciente"
+ITEM_TYPE_TITLE = "Pesquisador"
 TEMPLATE_TITLE  = "Análise Clínica Padrão"
 
 TEMPLATE_BODY_HTML = """
 <h2>Dados da Amostra</h2>
 <ul>
   <li>ID Agendamento: {{agendamento_id}}</li>
-  <li>ID Paciente (Item): {{item_paciente_id}}</li>
+  <li>ID Pesquisador (Item): {{item_pesquisador_id}}</li>
   <li>Data/Hora da Coleta: {{data_coleta}}</li>
   <li>Tipo de Amostra: {{tipo_amostra}}</li>
 </ul>
@@ -85,7 +85,7 @@ TEMPLATE_BODY_HTML = """
 """.strip()
 
 # =========================
-# Helpers HTTP
+# Helpers HTTP (Sem alterações aqui)
 # =========================
 def _url(base: str, path: str) -> str:
     return f"{base.rstrip('/')}/{path.lstrip('/')}"
@@ -133,14 +133,14 @@ def _to_list(data: Any) -> list:
 # =========================
 # Operações de Negócio
 # =========================
-def ensure_item_type_patient(base: str, key: str, verify: bool) -> int:
+def ensure_item_type_researcher(base: str, key: str, verify: bool) -> int:
     data = GET(base, key, verify, "items_types")
     entries = _to_list(data)
     for it in entries:
         if (it.get("title") or "").strip().lower() == ITEM_TYPE_TITLE.lower():
             return int(it["id"])
     created = POST(base, key, verify, "items_types",
-                   {"title": ITEM_TYPE_TITLE, "body": "Tipo para cadastro de Pacientes/Pesquisadores."})
+                   {"title": ITEM_TYPE_TITLE, "body": "Tipo para cadastro de Pesquisadores."})
     return int(created["id"])
 
 def ensure_template(base: str, key: str, verify: bool) -> int:
@@ -153,10 +153,10 @@ def ensure_template(base: str, key: str, verify: bool) -> int:
                    {"title": TEMPLATE_TITLE, "body": TEMPLATE_BODY_HTML})
     return int(created["id"])
 
-def register_patient(base: str, key: str, verify: bool, name: str) -> int:
+def register_researcher(base: str, key: str, verify: bool, name: str) -> int:
     if not name.strip():
-        raise ValueError("Nome do paciente vazio.")
-    items_type_id = ensure_item_type_patient(base, key, verify)
+        raise ValueError("Nome do pesquisador vazio.")
+    items_type_id = ensure_item_type_researcher(base, key, verify)
     created = POST(base, key, verify, "items", {"title": name.strip(), "items_type_id": items_type_id})
     item_id = created.get("id") or created.get("item_id")
     if not isinstance(item_id, int):
