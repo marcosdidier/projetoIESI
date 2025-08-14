@@ -21,7 +21,7 @@ from streamlit_autorefresh import st_autorefresh
 load_dotenv() # Carrega variáveis de ambiente de um arquivo .env
 
 # Busca as configurações da API ou usa valores padrão.
-DEFAULT_ELAB_URL = os.getenv("ELAB_URL", "https://demo.elabftw.net")
+DEFAULT_ELAB_URL = os.getenv("ELAB_URL", "")
 DEFAULT_API_KEY = os.getenv("API_KEY", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
