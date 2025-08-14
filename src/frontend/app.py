@@ -21,10 +21,14 @@ from streamlit_autorefresh import st_autorefresh
 load_dotenv() # Carrega variáveis de ambiente de um arquivo .env
 
 # Busca as configurações da API ou usa valores padrão.
-DEFAULT_ELAB_URL = os.getenv("ELAB_URL", "")
-DEFAULT_API_KEY = os.getenv("API_KEY", "")
+ELAB_URL = os.getenv("ELAB_URL", "")
+API_KEY = os.getenv("API_KEY", "")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
+api_headers = {
+    "elab-url": ELAB_URL,
+    "elab-api-key": API_KEY,
+}
 
 # =========================
 # Estado da Sessão (Session State)
@@ -106,30 +110,11 @@ st.set_page_config(page_title="Plataforma de Pesquisa • LIACLI", page_icon="�
 st.title("🔬 Plataforma de Integração LIACLI")
 st.caption("Interface para gestão de análises e experimentos no eLabFTW.")
 
-# --- BARRA LATERAL DE CONFIGURAÇÃO ---
-with st.sidebar:
-    st.header("⚙️ Configuração da API")
-    elab_url = st.text_input("URL do eLabFTW", value=DEFAULT_ELAB_URL)
-    api_key = st.text_input("Chave da API (Read/Write)", value=DEFAULT_API_KEY, type="password")
-
-    # Os cabeçalhos são montados uma vez e reutilizados em todas as chamadas.
-    api_headers = {"elab-url": elab_url, "elab-api-key": api_key}
-
-    if st.button("Testar Conexão", use_container_width=True):
-        if not all([elab_url, api_key]):
-            st.warning("Preencha a URL e a Chave da API.")
-        else:
-            try:
-                with st.spinner("Testando..."):
-                    api_test_connection(api_headers)
-            except requests.exceptions.RequestException as e:
-                handle_api_error(e, "Testar Conexão")
-
 # --- ABAS PARA ORGANIZAR O FLUXO ---
 tab1, tab2, tab3 = st.tabs([
     " Nova Solicitação de Análise ",
     " Acompanhamento e Laudos ",
-    " ⚙️ Administração "
+    " Administração "
 ])
 
 # =========================
