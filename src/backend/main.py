@@ -1,29 +1,34 @@
 # backend/main.py
-from fastapi import FastAPI, HTTPException, Header, Body
+from fastapi import FastAPI, HTTPException, Header, Body, Depends
 from typing import Dict, Any
-import elab_service  # Importa o nosso módulo de serviço
+import elab_service
+from schemas import PatientRequest, ExperimentRequest
+from database import get_db, register_experiment, init_database, test_connection
+from sqlalchemy.orm import Session
+from contextlib import asynccontextmanager
 
-# Define os modelos de dados para a API (ajuda na documentação e validação)
-from pydantic import BaseModel
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Iniciando aplicação...")
 
-class PatientRequest(BaseModel):
-    name: str
+    init_database()
+    test_connection()
 
-class ExperimentRequest(BaseModel):
-    agendamento_id: str
-    item_paciente_id: int
-    display_name: str
-    tipo_amostra: str
+    yield
+
+    print("Encerrando aplicação...")
+
 
 app = FastAPI(
     title="LIACLI Backend API",
     description="API que serve como gateway para o eLabFTW.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Endpoint para testar a conexão (usado no sidebar do front)
 @app.post("/test-connection")
-def test_connection(
+def test_elab_connection(
     elab_url: str = Header(...),
     elab_api_key: str = Header(...)
 ):
@@ -54,7 +59,8 @@ def initialize_elab(
 def create_patient(
     request: PatientRequest,
     elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
+    elab_api_key: str = Header(...),
+    db: Session = Depends(get_db)
 ):
     try:
         item_id = elab_service.register_patient(elab_url, elab_api_key, True, request.name)
@@ -67,7 +73,8 @@ def create_patient(
 def create_new_experiment(
     request: ExperimentRequest,
     elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
+    elab_api_key: str = Header(...),
+    db: Session = Depends(get_db)
 ):
     try:
         # Lógica para criar o título e o dicionário de variáveis
