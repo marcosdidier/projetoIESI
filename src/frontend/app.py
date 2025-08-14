@@ -143,7 +143,9 @@ if not st.session_state.data_loaded:
                 researchers_data = api_get_researchers(api_headers)
                 st.session_state.researchers_session = {r["name"]: r for r in researchers_data} #
                 exp_data = api_get_experiments(api_headers)
-                st.session_state.agendamentos = {exp["id"]: exp["elab_experiment_id"] for exp in exp_data} #
+                st.session_state.researchers_session = {r["name"]: r for r in researchers_data}
+                exp_data = api_get_experiments(api_headers)
+                st.session_state.agendamentos = {exp["id"]: exp["elab_experiment_id"] for exp in exp_data}
                 st.toast(f"{len(researchers_data)} pesquisadores e {len(exp_data)} solicitações carregadas!", icon="✅")
                 st.session_state.data_loaded = True
         except requests.exceptions.RequestException as e:
