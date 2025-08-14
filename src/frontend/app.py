@@ -21,7 +21,6 @@ import numpy as np
 # =========================
 
 def gradient_bar(height: int = 6, width: int = 1200):
-    """Barra de separação em degradê renderizada como imagem."""
     left = np.array([252, 76, 76], dtype=np.float32)
     right = np.array([255, 255, 124], dtype=np.float32)
     x = np.linspace(0.0, 1.0, width, dtype=np.float32).reshape(1, width, 1)
@@ -63,7 +62,6 @@ if "last_consulted_id" not in st.session_state:
 # Flag para controlar o carregamento inicial de dados
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
-
 
 # =========================
 # Funções de Comunicação com o Backend
@@ -121,12 +119,24 @@ def api_initialize(headers: Dict) -> None:
     response.raise_for_status()
     st.success("Estruturas essenciais verificadas com sucesso no eLabFTW!")
 
+if not st.session_state.initialized_elab:
+    if not ELAB_URL or not API_KEY:
+        st.session_state.initialized_elab = False
+        st.warning("Defina ELAB_URL e API_KEY no seu .env para inicializar o ambiente.")
+    else:
+        try:
+            api_initialize(api_headers)
+            st.session_state.initialized_elab = True
+            st.toast("Estruturas essenciais verificadas.", icon="✅")
+        except requests.exceptions.RequestException as e:
+            st.session_state.initialized_elab = False
+            handle_api_error(e, "Inicializar Ambiente")
 
 # =========================
 # Interface Principal (UI)
 # =========================
 
-st.set_page_config(page_title="Plataforma de Pesquisa • LIACLI", page_icon="🔬", layout="centered")
+st.set_page_config(page_title="Plataforma de Pesquisa | LIACLI", page_icon="🔬", layout="centered")
 st.title("Portal de Integração | LIACLI")
 st.caption("Fluxo Integrado de Solicitações e Gestão Laboratorial via eLabFTW")
 gradient_bar()
@@ -154,9 +164,9 @@ if not st.session_state.data_loaded:
 
 # --- ABAS PARA ORGANIZAR O FLUXO ---
 tab1, tab2, tab3 = st.tabs([
-    " Nova Solicitação de Análise ",
-    " Acompanhamento e Laudos ",
-    " Administração "
+    "Nova Solicitação de Análise",
+    "Acompanhamento e Laudos",
+    "Administração"
 ])
 
 # =========================
@@ -205,25 +215,25 @@ with tab1:
         with c1:
             agendamento_id = st.text_input("ID de Referência (Agendamento)", help="Código único para referência externa. Ex: 'PROJ-X-001'", placeholder="PROJ-X-001")
         with c2:
-            tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue Total", help="Ex.: Sangue Total, Soro, Plasma, etc.")
+            tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue", help="Ex.: Sangue, Soro, Plasma, etc.")
 
         if st.form_submit_button("Criar Solicitação no eLabFTW", type="primary", use_container_width=True):
             if not nome_pesquisador_selecionado:
                 st.error("Selecione um pesquisador da lista.")
             elif not agendamento_id.strip():
                 st.error("O ID de Referência (Agendamento) é obrigatório.")
-            elif agendamento_id.strip() in st.session_state.agendamentos: #
+            elif agendamento_id.strip() in st.session_state.agendamentos:
                 st.error("Este ID de Referência já foi usado. Crie um novo.")
             else:
                 try:
-                    researcher_info = st.session_state.researchers_session[nome_pesquisador_selecionado] #
-                    local_id = researcher_info["id"] #
-                    elab_item_id = researcher_info.get("elab_item_id") #
+                    researcher_info = st.session_state.researchers_session[nome_pesquisador_selecionado]
+                    local_id = researcher_info["id"]
+                    elab_item_id = researcher_info.get("elab_item_id")
 
                     with st.spinner("Criando solicitação no eLabFTW..."):
                         json_body = {
                             "agendamento_id": agendamento_id.strip(),
-                            "researcher_id": local_id, #
+                            "researcher_id": local_id,
                             "item_pesquisador_id": elab_item_id or 0,
                             "display_name": nome_pesquisador_selecionado.strip(),
                             "tipo_amostra": tipo_amostra.strip() or "Não informado",
@@ -253,7 +263,7 @@ with tab1:
 with tab2:
     st.header("Acompanhamento e Laudo da Análise")
 
-    agendamentos_existentes = list(st.session_state.agendamentos.keys()) #
+    agendamentos_existentes = list(st.session_state.agendamentos.keys())
     ag_key_selecionado = st.selectbox(
         "Selecione o ID de Referência da solicitação",
         options=sorted(agendamentos_existentes, reverse=True),
@@ -270,7 +280,7 @@ with tab2:
         if ag_key not in st.session_state.agendamentos:
             st.error(f"ID de Referência '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
         else:
-            exp_id = st.session_state.agendamentos[ag_key] #
+            exp_id = st.session_state.agendamentos[ag_key]
             st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
             try:
                 status = api_get_status(api_headers, exp_id)
@@ -342,19 +352,7 @@ with tab3:
     st.divider()
     # --- FIM DO NOVO BLOCO ---
 
-
-    st.subheader("Verificação Manual de Estruturas no eLabFTW")
-    st.markdown("Esta ação verifica se o **Tipo de Item 'Pesquisador'** existe no seu eLabFTW. Se não existir, ele será criado.")
-    if st.button("Verificar Estruturas", use_container_width=True):
-        try:
-            with st.spinner("Verificando..."):
-                api_initialize(api_headers)
-        except requests.exceptions.RequestException as e:
-            handle_api_error(e, "Inicializar Ambiente")
-
-    st.divider()
-
-    st.subheader("Dados da Sessão Atual (Carregados do Banco)")
+    st.subheader("Dados do Banco")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Pesquisadores**")
@@ -365,7 +363,7 @@ with tab3:
 
     st.divider()
     
-    st.header("🔗 Visualizar Experimentos por Pesquisador")
+    st.header("Experimentos por Pesquisador")
     researcher_names = list(st.session_state.researchers_session.keys())
     
     if not researcher_names:
@@ -387,9 +385,22 @@ with tab3:
             if not experiments_list:
                 st.write("Nenhuma solicitação encontrada para este pesquisador.")
             else:
-                for exp in experiments_list:
-                    st.info(f"**ID da Referência (Agendamento):** `{exp['id']}`\n\n**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
+                for idx, exp in enumerate(experiments_list):
+                    st.markdown(
+                        f"""
+                        <div style='background-color: white; padding: 12px; border-radius: 6px; border: 1px solid #ddd;'>
+                            <strong>Código de Agendamento:</strong> <code>{exp['id']}</code><br>
+                            <strong>ID do Experimento no eLab:</strong> <code>{exp['elab_experiment_id']}</code>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
 
+                    # Adiciona divisor somente entre os blocos (não no último)
+                    if idx < len(experiments_list) - 1:
+                        st.write("")
+
+st.write("")
 # =========================
 # Rodapé
 # =========================
