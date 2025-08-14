@@ -1,16 +1,19 @@
-# backend/main.py (REFATORADO E COMENTADO)
+# backend/main.py 
 
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Body
 from typing import Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
+from schemas import PatientRequest, ExperimentRequest
+from database import get_db, register_experiment, init_database, test_connection
+from sqlalchemy.orm import Session
+from contextlib import asynccontextmanager
 
 import elab_service  # Nosso módulo que conversa com a API do eLabFTW
 
 # --- Modelos de Dados (Pydantic) ---
 # Define o formato esperado para os dados nas requisições,
 # garantindo validação automática e documentação.
-
 class ResearcherRequest(BaseModel):
     """Corpo da requisição para cadastrar um novo pesquisador."""
     name: str
@@ -27,6 +30,18 @@ class ElabCredentials(BaseModel):
     url: str
     api_key: str
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Iniciando aplicação...")
+
+    init_database()
+    test_connection()
+
+    yield
+
+    print("Encerrando aplicação...")
+      
 # --- Dependências (FastAPI) ---
 # Funções que o FastAPI pode injetar automaticamente nos endpoints.
 
@@ -48,13 +63,15 @@ app = FastAPI(
     title="LIACLI Backend API",
     description="API que serve como um gateway inteligente para o eLabFTW, simplificando operações comuns.",
     version="1.1.0" # Versão atualizada para refletir a refatoração
+    lifespan=lifespan
 )
 
-# --- Endpoints da API ---
-
+# Endpoint para testar a conexão (usado no sidebar do front)
 @app.post("/test-connection", summary="Testa a Conexão com a API do eLabFTW")
-def test_connection(creds: ElabCredentials = Depends(get_elab_credentials)):
-    """Verifica se a URL e a API Key fornecidas são válidas."""
+def test_elab_connection(
+    elab_url: str = Header(...),
+    elab_api_key: str = Header(...)
+):
     try:
         elab_service.GET(creds.url, creds.api_key, True, "items_types")
         return {"status": "ok", "message": "Conexão com a API do eLabFTW bem-sucedida."}
@@ -74,8 +91,13 @@ def initialize_elab(creds: ElabCredentials = Depends(get_elab_credentials)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/pesquisadores", summary="Cadastra um Novo Pesquisador")
-def create_researcher(request: ResearcherRequest, creds: ElabCredentials = Depends(get_elab_credentials)):
-    """Cria um novo item do tipo 'Pesquisador' no eLabFTW."""
+def create_researcher(
+  request: ResearcherRequest, 
+  creds: ElabCredentials = Depends(get_elab_credentials),
+  elab_url: str = Header(...),
+  elab_api_key: str = Header(...),
+  db: Session = Depends(get_db)
+):
     try:
         item_id = elab_service.register_researcher(creds.url, creds.api_key, True, request.name)
         return {"name": request.name, "item_id": item_id}
@@ -83,11 +105,13 @@ def create_researcher(request: ResearcherRequest, creds: ElabCredentials = Depen
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/experimentos", summary="Cria um Novo Experimento")
-def create_new_experiment(request: ExperimentRequest, creds: ElabCredentials = Depends(get_elab_credentials)):
-    """
-    Cria um novo experimento no eLabFTW a partir de um template,
-    preenchendo os dados e vinculando-o a um pesquisador.
-    """
+def create_new_experiment(
+    request: ExperimentRequest,
+    creds: ElabCredentials = Depends(get_elab_credentials),
+    elab_url: str = Header(...),
+    elab_api_key: str = Header(...),
+    db: Session = Depends(get_db)
+):
     try:
         # Monta o título do experimento de forma padronizada
         title = f"[AG:{request.agendamento_id}] Análises {request.display_name} - {datetime.now().date().isoformat()}"
