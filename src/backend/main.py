@@ -3,13 +3,27 @@ from fastapi import FastAPI, HTTPException, Header, Body, Depends
 from typing import Dict, Any
 import elab_service
 from schemas import PatientRequest, ExperimentRequest
-from database import get_db, register_experiment
+from database import get_db, register_experiment, init_database, test_connection
 from sqlalchemy.orm import Session
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Iniciando aplicação...")
+
+    init_database()
+    test_connection()
+
+    yield
+
+    print("Encerrando aplicação...")
+
 
 app = FastAPI(
     title="LIACLI Backend API",
     description="API que serve como gateway para o eLabFTW.",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Endpoint para testar a conexão (usado no sidebar do front)
