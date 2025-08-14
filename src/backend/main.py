@@ -195,3 +195,7 @@ def get_experiment_pdf(experiment_id: int, include_changelog: bool = False, cred
         return Response(content=pdf_bytes, media_type="application/pdf")
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
