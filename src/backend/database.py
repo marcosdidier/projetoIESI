@@ -135,7 +135,7 @@ def test_connection() -> bool:
 def get_researcher_experiments(db: Session, researcher: int) -> List[dict]:
     """Retorna experimentos de um pesquisador"""
     try:
-        experiments = db.query(Experiment).filter(Experiment.researcher == researcher).all()
+        experiments = db.query(Experiment).filter(Experiment.researcher_id == researcher).all()
         return [{"id": e.id, "researcher": e.researcher, "created_at": e.created_at} for e in experiments]
     except Exception as e:
         print(f"❌ Erro ao buscar experimentos: {e}")
@@ -180,99 +180,99 @@ def register_experiment(db: Session, experiment_id: str, researcher_id: int) -> 
     
 # ===== Testes =====
 
-# def create_sample_data():
-#     """Cria dados de exemplo para teste"""
-#     print("🔧 Criando dados de exemplo...")
-#     SessionLocal = get_session_local()
-#     with SessionLocal() as db:
-#         # Criar Pesquisadors
-#         register_researcher(db, "A", "123456")
-#         register_researcher(db, "B", "abcdef")
-#         register_researcher(db, "C", "qwerty")
+def create_sample_data():
+    """Cria dados de exemplo para teste"""
+    print("🔧 Criando dados de exemplo...")
+    SessionLocal = get_session_local()
+    with SessionLocal() as db:
+        # Criar Pesquisadors
+        register_researcher(db, "D", "123456")
+        register_researcher(db, "E", "abcdef")
+        register_researcher(db, "F", "qwerty")
         
-#         # Criar experimentos
-#         register_experiment(db, "EXP001", 1)
-#         register_experiment(db, "EXP002", 2)
-#         register_experiment(db, "EXP003", 3)
-#         register_experiment(db, "EXP004", 1)
+        # Criar experimentos
+        register_experiment(db, "EXP005", 4)
+        register_experiment(db, "EXP006", 5)
+        register_experiment(db, "EXP007", 6)
+        register_experiment(db, "EXP008", 4)
     
-#     print("✅ Dados de exemplo criados!")
+    print("✅ Dados de exemplo criados!")
 
-# def show_data():
-#     """Mostra os dados no banco"""
-#     try:
-#         SessionLocal = get_session_local()
-#         with SessionLocal() as db:
-#             print("\n📊 Dados no banco:")
-#             print("=" * 50)
+def show_data():
+    """Mostra os dados no banco"""
+    try:
+        SessionLocal = get_session_local()
+        with SessionLocal() as db:
+            print("\n📊 Dados no banco:")
+            print("=" * 50)
             
-#             # Pesquisadors
-#             researchers = db.query(Researcher).all()
-#             print(f"\n👥 Pesquisadores ({len(researchers)}):")
-#             for researcher in researchers:
-#                 print(f"  • ID: {researcher.id} | Nome: {researcher.name} | Criado: {researcher.created_at}")
+            # Pesquisadors
+            researchers = db.query(Researcher).all()
+            print(f"\n👥 Pesquisadores ({len(researchers)}):")
+            for researcher in researchers:
+                print(f"  • ID: {researcher.id} | Nome: {researcher.name} | Criado: {researcher.created_at}")
             
-#             # Experimentos
-#             experiments = db.query(Experiment).all()
-#             print(f"\n🧪 Experimentos ({len(experiments)}):")
-#             for exp in experiments:
-#                 owner = db.query(Researcher).get(exp.researcher_id)
-#                 owner_name = owner.name if owner else "Pesquisador não encontrado"
-#                 print(f"  • ID: {exp.id} | Pesquisador: {owner_name} | Criado: {exp.created_at}")
+            # Experimentos
+            experiments = db.query(Experiment).all()
+            print(f"\n🧪 Experimentos ({len(experiments)}):")
+            for exp in experiments:
+                owner = db.query(Researcher).get(exp.researcher_id)
+                owner_name = owner.name if owner else "Pesquisador não encontrado"
+                print(f"  • ID: {exp.id} | Pesquisador: {owner_name} | Criado: {exp.created_at}")
             
-#             print("\n" + "=" * 50)
-#     except Exception as e:
-#         print(f"❌ Erro ao mostrar dados: {e}")
+            print("\n" + "=" * 50)
+    except Exception as e:
+        print(f"❌ Erro ao mostrar dados: {e}")
 
-# def get_env_info() -> dict:
-#     """Retorna informações das variáveis de ambiente (para debug)"""
-#     return {
-#         "db_host": DB_HOST,
-#         "db_port": DB_PORT,
-#         "db_user": DB_USER,
-#         "db_name": DB_NAME,
-#         "has_password": bool(DB_PASSWORD),
-#         "app_env": os.getenv("APP_ENV", "production"),
-#         "debug": os.getenv("DEBUG", "false").lower() == "true"
-#     }
+def get_env_info() -> dict:
+    """Retorna informações das variáveis de ambiente (para debug)"""
+    return {
+        "db_host": DB_HOST,
+        "db_port": DB_PORT,
+        "db_user": DB_USER,
+        "db_name": DB_NAME,
+        "has_password": bool(DB_PASSWORD),
+        "app_env": os.getenv("APP_ENV", "production"),
+        "debug": os.getenv("DEBUG", "false").lower() == "true"
+    }
 
-# # ===== Script principal =====
-# if __name__ == "__main__":
-#     print("🚀 Iniciando setup do banco de dados...")
-#     print("=" * 60)
+# ===== Script principal =====
+if __name__ == "__main__":
+    print("🚀 Iniciando setup do banco de dados...")
+    print("=" * 60)
     
-#     # Mostrar configurações se debug estiver ativo
-#     if os.getenv("DEBUG", "false").lower() == "true":
-#         env_info = get_env_info()
-#         print(f"🔧 Ambiente: {env_info['app_env']}")
-#         print(f"🔧 Debug: {env_info['debug']}")
+    # Mostrar configurações se debug estiver ativo
+    if os.getenv("DEBUG", "false").lower() == "true":
+        env_info = get_env_info()
+        print(f"🔧 Ambiente: {env_info['app_env']}")
+        print(f"🔧 Debug: {env_info['debug']}")
     
-#     # 1) Criar banco se não existir
-#     if not create_database_if_not_exists():
-#         print("❌ Falha ao criar/verificar banco")
-#         raise SystemExit(1)
+    # 1) Criar banco se não existir
+    if not create_database_if_not_exists():
+        print("❌ Falha ao criar/verificar banco")
+        raise SystemExit(1)
 
-#     # 2) Criar tabelas
-#     if not init_database():
-#         print("❌ Falha ao criar tabelas")
-#         raise SystemExit(1)
+    # 2) Criar tabelas
+    if not init_database():
+        print("❌ Falha ao criar tabelas")
+        raise SystemExit(1)
 
-#     # 3) Testar conexão
-#     if not test_connection():
-#         print("❌ Falha na conexão")
-#         raise SystemExit(1)
+    # 3) Testar conexão
+    if not test_connection():
+        print("❌ Falha na conexão")
+        raise SystemExit(1)
 
-#     # 4) Criar dados de exemplo e mostrar
-#     create_sample_data()
-#     show_data()
+    # 4) Criar dados de exemplo e mostrar
+    create_sample_data()
+    show_data()
 
-#     print("\n✅ Setup completo!")
-#     print(f"  • Host: {DB_HOST}:{DB_PORT}")
-#     print(f"  • Banco: {DB_NAME}")
-#     print(f"  • Pesquisador: {DB_USER}")
-#     print("\n🔧 Para conectar no Beekeeper Studio:")
-#     print(f"  • Host: {DB_HOST}")
-#     print(f"  • Port: {DB_PORT}")
-#     print(f"  • Database: {DB_NAME}")
-#     print(f"  • Username: {DB_USER}")
-#     print(f"  • Password: [sua senha do .env]")
+    print("\n✅ Setup completo!")
+    print(f"  • Host: {DB_HOST}:{DB_PORT}")
+    print(f"  • Banco: {DB_NAME}")
+    print(f"  • Pesquisador: {DB_USER}")
+    print("\n🔧 Para conectar no Beekeeper Studio:")
+    print(f"  • Host: {DB_HOST}")
+    print(f"  • Port: {DB_PORT}")
+    print(f"  • Database: {DB_NAME}")
+    print(f"  • Username: {DB_USER}")
+    print(f"  • Password: [sua senha do .env]")
