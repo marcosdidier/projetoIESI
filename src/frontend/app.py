@@ -1,327 +1,284 @@
-# frontend/app.py
-# Este é o front-end da aplicação, construído com Streamlit.
-# Ele é responsável apenas pela interface e por se comunicar com o nosso back-end FastAPI.
-
+# frontend/app.py (REFATORADO E COMENTADO)
 import streamlit as st
 import requests
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 import os
 from dotenv import load_dotenv
 from streamlit_autorefresh import st_autorefresh
 
-# =========================
-# Configs
-# =========================
+# ==============================================================================
+# APLICAÇÃO FRONTEND COM STREAMLIT
+# ------------------------------------------------------------------------------
+# Este arquivo constrói a interface gráfica com a qual o usuário interage.
+# Ele não contém lógica de negócio; apenas monta os botões e campos,
+# e chama o nosso backend (main.py) para realizar as ações.
+# ==============================================================================
 
-# Carregar variáveis do arquivo .env
-load_dotenv()
+
+# =========================
+# Configuração Inicial
+# =========================
+load_dotenv() # Carrega variáveis de ambiente de um arquivo .env
+
+# Busca as configurações da API ou usa valores padrão.
 DEFAULT_ELAB_URL = os.getenv("ELAB_URL", "")
 DEFAULT_API_KEY = os.getenv("API_KEY", "")
-BACKEND_URL = "http://127.0.0.1:8000"  # Endereço da nossa API FastAPI
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+
 
 # =========================
-# Estado em memória (para guardar dados durante a sessão do usuário) 
+# Estado da Sessão (Session State)
 # =========================
-# """
-# !!!!!!!!!!!!!!!!!!!
-# TIRAR ISSO QUANDO FIZER O BANCO DE DADOS PARA CADASTRO
-# DO PESQUISADOR
-# !!!!!!!!!!!!!!!!!!!
-# """
+# O session_state do Streamlit é um "dicionário mágico" que persiste
+# os dados enquanto o usuário mantém a aba do navegador aberta.
 
-if "patients" not in st.session_state:
-    st.session_state.patients: Dict[str, int] = {}
+# Guarda os pesquisadores cadastrados durante a sessão para fácil acesso.
+if "researchers_session" not in st.session_state:
+    st.session_state.researchers_session: Dict[str, int] = {}
+
+# Guarda os experimentos criados na sessão (ID de Referência -> ID do Experimento).
 if "agendamentos" not in st.session_state:
     st.session_state.agendamentos: Dict[str, int] = {}
-if "pdf_bytes" not in st.session_state:
-    st.session_state.pdf_bytes: Optional[bytes] = None
-if "pdf_name" not in st.session_state:
-    st.session_state.pdf_name: Optional[str] = None
+
+# Armazena temporariamente o último PDF gerado para o botão de download.
+if "pdf_info" not in st.session_state:
+    st.session_state.pdf_info: Dict[str, Any] = {"bytes": None, "name": None}
+
+# Mantém o controle do último ID consultado para evitar recargas indesejadas.
+if "last_consulted_id" not in st.session_state:
+    st.session_state.last_consulted_id: Optional[str] = None
+
 
 # =========================
-# Interface do Usuário (UI)
+# Funções de Comunicação com o Backend
 # =========================
-st.set_page_config(page_title="Plataforma Externa • LIACLI", page_icon="🧪", layout="centered")
-st.title("🧪 Laboratório de Análises Clínicas • LIACLI")
 
+def handle_api_error(e: requests.exceptions.RequestException, context: str):
+    """Exibe uma mensagem de erro amigável para o usuário em caso de falha na API."""
+    error_message = str(e)
+    # Tenta extrair a mensagem de erro específica do backend.
+    if e.response is not None:
+        try:
+            error_detail = e.response.json().get("detail", e.response.text)
+            error_message = f"Erro {e.response.status_code}: {error_detail}"
+        except (ValueError, AttributeError):
+            error_message = f"Erro {e.response.status_code}: {e.response.text}"
+    st.error(f"Falha em '{context}': {error_message}")
+
+# As funções abaixo encapsulam as chamadas de API, limpando o código da UI.
+def api_test_connection(headers: Dict) -> None:
+    response = requests.post(f"{BACKEND_URL}/test-connection", headers=headers)
+    response.raise_for_status()
+    st.success(response.json()["message"])
+
+def api_create_researcher(headers: Dict, name: str) -> Dict:
+    response = requests.post(f"{BACKEND_URL}/pesquisadores", headers=headers, json={"name": name})
+    response.raise_for_status()
+    return response.json()
+
+def api_create_experiment(headers: Dict, body: Dict) -> Dict:
+    response = requests.post(f"{BACKEND_URL}/experimentos", headers=headers, json=body)
+    response.raise_for_status()
+    return response.json()
+
+def api_get_status(headers: Dict, exp_id: int) -> str:
+    response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/status", headers=headers)
+    response.raise_for_status()
+    return response.json().get('status', 'desconhecido')
+
+def api_get_pdf(headers: Dict, exp_id: int, include_changelog: bool) -> bytes:
+    params = {"include_changelog": include_changelog}
+    response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/pdf", headers=headers, params=params)
+    response.raise_for_status()
+    return response.content
+
+def api_initialize(headers: Dict) -> None:
+    response = requests.post(f"{BACKEND_URL}/initialize", headers=headers)
+    response.raise_for_status()
+    st.success("Estruturas essenciais verificadas com sucesso no eLabFTW!")
+
+
+# =========================
+# Interface Principal (UI)
+# =========================
+
+st.set_page_config(page_title="Plataforma de Pesquisa • LIACLI", page_icon="🔬", layout="centered")
+st.title("🔬 Plataforma de Integração LIACLI")
+st.caption("Interface para gestão de análises e experimentos no eLabFTW.")
+
+# --- BARRA LATERAL DE CONFIGURAÇÃO ---
 with st.sidebar:
-    st.header("Configuração da API")
-    elab_url = st.text_input("ELAB_URL", value=DEFAULT_ELAB_URL)
-    api_key = st.text_input("ELAB_API_KEY", value=DEFAULT_API_KEY, type="password")
+    st.header("⚙️ Configuração da API")
+    elab_url = st.text_input("URL do eLabFTW", value=DEFAULT_ELAB_URL)
+    api_key = st.text_input("Chave da API (Read/Write)", value=DEFAULT_API_KEY, type="password")
 
-    # Cabeçalhos que serão enviados em todas as requisições para o nosso backend
+    # Os cabeçalhos são montados uma vez e reutilizados em todas as chamadas.
     api_headers = {"elab-url": elab_url, "elab-api-key": api_key}
 
-    if st.button("Testar conexão"):
-        if not api_key or api_key == DEFAULT_API_KEY:
-            st.warning("Por favor, insira uma chave de API válida.")
+    if st.button("Testar Conexão", use_container_width=True):
+        if not all([elab_url, api_key]):
+            st.warning("Preencha a URL e a Chave da API.")
         else:
             try:
                 with st.spinner("Testando..."):
-                    response = requests.post(f"{BACKEND_URL}/test-connection", headers=api_headers)
-                    if response.status_code == 200:
-                        st.success(response.json()["message"])
-                    else:
-                        st.error(f"Erro {response.status_code}: {response.text}")
+                    api_test_connection(api_headers)
             except requests.exceptions.RequestException as e:
-                st.error(f"Falha de conexão com o backend: {e}")
+                handle_api_error(e, "Testar Conexão")
 
-st.divider()
+# --- ABAS PARA ORGANIZAR O FLUXO ---
+tab1, tab2, tab3 = st.tabs([
+    " Nova Solicitação de Análise ",
+    " Acompanhamento e Laudos ",
+    " ⚙️ Administração "
+])
 
-# 1) Inicializar (ItemType + Template)
-st.subheader("1) Inicializar Ambiente no eLabFTW")
-if st.button("Garantir ItemType e Template Padrão"):
-    try:
-        with st.spinner("Inicializando..."):
-            response = requests.post(f"{BACKEND_URL}/initialize", headers=api_headers)
-            response.raise_for_status()
-            data = response.json()
-            st.success(f"ItemType 'Paciente' OK (id={data['item_type_id']})")
-            st.success(f"Template 'Análise Clínica Padrão' OK (id={data['template_id']})")
-    except requests.exceptions.RequestException as e:
-        st.error(f"Erro ao inicializar: {e}")
+# =========================
+# ABA 1: NOVA SOLICITAÇÃO
+# =========================
+with tab1:
+    st.header("Registrar Nova Solicitação de Análise")
 
-st.divider()
+    # --- Seção de Cadastro de Pesquisador ---
+    with st.expander("Cadastrar Novo Pesquisador (se necessário)"):
+        with st.form("form_researcher"):
+            name = st.text_input("Nome completo do pesquisador")
+            if st.form_submit_button("Cadastrar Pesquisador"):
+                if not name.strip():
+                    st.warning("O nome do pesquisador não pode ser vazio.")
+                else:
+                    try:
+                        with st.spinner(f"Cadastrando '{name.strip()}'..."):
+                            data = api_create_researcher(api_headers, name.strip())
+                            item_id = data["item_id"]
+                            st.session_state.researchers_session[name.strip()] = item_id
+                            st.success(f"Pesquisador '{name.strip()}' cadastrado! (ID do Item: {item_id})")
+                    except requests.exceptions.RequestException as e:
+                        handle_api_error(e, "Cadastrar Pesquisador")
 
-# 2) Cadastrar paciente
-st.subheader("2) Cadastrar paciente")
-with st.form("form_patient"):
-    name = st.text_input("Nome do paciente")
-    ok = st.form_submit_button("Cadastrar")
-    if ok:
-        if not name.strip():
-            st.warning("O nome do paciente não pode ser vazio.")
-        else:
-            try:
-                with st.spinner("Cadastrando..."):
-                    json_body = {"name": name.strip()}
-                    response = requests.post(f"{BACKEND_URL}/pacientes", headers=api_headers, json=json_body)
-                    response.raise_for_status()
-                    data = response.json()
-                    item_id = data["item_id"]
-                    st.session_state.patients[name.strip()] = item_id
-                    st.success(f"Paciente '{name}' cadastrado → item_id={item_id}")
-            except requests.exceptions.RequestException as e:
-                st.error(f"Erro ao cadastrar paciente: {e}")
+    st.divider()
 
-if st.session_state.patients:
-    st.caption("Pacientes cadastrados nesta sessão:")
-    st.table([{"Nome": n, "item_id": iid} for n, iid in st.session_state.patients.items()])
-
-st.divider()
-
-# 3) Marcar experimento
-st.subheader("3) Criar nova solicitação de análise")
-
-with st.container(border=True):
+    # --- Seção de Criação de Experimento ---
+    st.subheader("Preencher Dados da Solicitação")
     with st.form("form_experiment"):
-        st.write("Primeiro, selecione o paciente para a análise:")
-        
-        # --- Lógica de Seleção do Paciente ---
-        src = st.radio(
-            "Origem do paciente",
-            ["Escolher da lista (cadastrados nesta sessão)", "Informar item_id manualmente"],
-            horizontal=True,
-            label_visibility="collapsed"
+        st.markdown("**1. Selecione o Pesquisador**")
+        researchers_in_session = list(st.session_state.researchers_session.keys())
+        nome_pesquisador_selecionado = st.selectbox(
+            "Pesquisador cadastrado na sessão",
+            options=researchers_in_session,
+            index=None,
+            placeholder="Escolha um pesquisador..."
         )
+        item_id_manual = st.text_input("Ou informe o ID do Item do pesquisador manualmente")
 
-        selected_item_id = None
-        display_name = ""
+        st.markdown("**2. Detalhes da Análise**")
+        agendamento_id = st.text_input("ID de Referência (Agendamento)", help="Um código único para sua referência externa. Ex: 'PROJ-X-001'")
+        tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue Total")
 
-        if src == "Escolher da lista (cadastrados nesta sessão)":
-            options = list(st.session_state.patients.keys())
-            if not options:
-                st.info("Nenhum paciente na sessão. Por favor, cadastre um paciente no passo 2.")
+        if st.form_submit_button("Criar Solicitação no eLabFTW", type="primary", use_container_width=True):
+            final_item_id, display_name = (None, "")
+            if nome_pesquisador_selecionado:
+                final_item_id = st.session_state.researchers_session[nome_pesquisador_selecionado]
+                display_name = nome_pesquisador_selecionado
+            elif item_id_manual.isdigit():
+                final_item_id = int(item_id_manual)
+                display_name = f"Pesquisador ID {final_item_id}"
             else:
-                nome_sel = st.selectbox("Paciente", options, index=None, placeholder="Selecione um paciente...")
-                if nome_sel:
-                    selected_item_id = st.session_state.patients[nome_sel]
-                    display_name = nome_sel
-        else: # "Informar item_id manualmente"
-            manual_id_str = st.text_input("item_id do paciente")
-            if manual_id_str.strip().isdigit():
-                selected_item_id = int(manual_id_str.strip())
-                # Para o título, usamos o ID, mas o usuário pode sobrescrever se quiser
-                display_name = st.text_input("Nome (para o título da solicitação)", value=f"Paciente {selected_item_id}")
-            elif manual_id_str: # Se o usuário digitou algo que não é um número
-                st.warning("O item_id deve ser um número inteiro.")
+                st.error("Selecione um pesquisador da lista ou informe um ID de item numérico válido.")
 
-        st.divider()
-        st.write("Agora, preencha os dados da solicitação:")
-        
-        agendamento_id = st.text_input("ID do Agendamento (sua chave única de referência)")
-        tipo_amostra   = st.text_input("Tipo de amostra", value="Sangue")
-        
-        submit_exp = st.form_submit_button("Criar Solicitação no eLabFTW")
-
-        # --- Lógica de Submissão ---
-        if submit_exp:
-            agendamento_key = agendamento_id.strip()
-            
-            # 1. Validação robusta de todos os campos
-            errors = []
-            if not selected_item_id or not isinstance(selected_item_id, int):
-                errors.append("Um paciente válido precisa ser selecionado ou informado.")
-            if not agendamento_key:
-                errors.append("O ID do Agendamento é obrigatório.")
-            if agendamento_key in st.session_state.agendamentos:
-                errors.append("Este ID de Agendamento já foi usado. Por favor, use um novo.")
-            if not display_name.strip():
-                errors.append("O nome para o título da solicitação não pode ser vazio.")
-
-            # 2. Se não houver erros, prosseguir com a chamada de API
-            if errors:
-                for error in errors:
-                    st.error(error)
-            else:
+            if not agendamento_id.strip():
+                st.error("O ID de Referência (Agendamento) é obrigatório.")
+            elif agendamento_id.strip() in st.session_state.agendamentos:
+                st.error("Este ID de Referência já foi usado. Crie um novo.")
+            elif final_item_id:
                 try:
                     with st.spinner("Criando solicitação no eLabFTW..."):
                         json_body = {
-                            "agendamento_id": agendamento_key,
-                            "item_paciente_id": selected_item_id,
+                            "agendamento_id": agendamento_id.strip(),
+                            "item_pesquisador_id": final_item_id,
                             "display_name": display_name.strip(),
                             "tipo_amostra": tipo_amostra.strip() or "Não informado",
                         }
-                        response = requests.post(f"{BACKEND_URL}/experimentos", headers=api_headers, json=json_body)
-                        response.raise_for_status() # Lança um erro para status HTTP 4xx ou 5xx
-                        
-                        data = response.json()
-                        st.session_state.agendamentos[agendamento_key] = data["experiment_id"]
-                        st.success(f"Solicitação criada! ID do Experimento={data['experiment_id']} | Status: {data['status']}")
-                
+                        data = api_create_experiment(api_headers, json_body)
+                        st.session_state.agendamentos[agendamento_id.strip()] = data["experiment_id"]
+                        st.success(f"Solicitação criada! ID do Experimento: {data['experiment_id']} | Status: {data['status']}")
+                        st.info("Acompanhe o status na aba 'Acompanhamento e Laudos'.")
                 except requests.exceptions.RequestException as e:
-                    # Tratamento de erro aprimorado para mostrar a mensagem do backend
-                    error_message = str(e)
-                    if e.response is not None:
-                        try:
-                            # Tenta pegar o detalhe do erro do JSON retornado pelo FastAPI
-                            error_detail = e.response.json().get("detail", e.response.text)
-                            error_message = f"Erro {e.response.status_code}: {error_detail}"
-                        except:
-                            # Se a resposta não for JSON, mostra o texto puro
-                            error_message = f"Erro {e.response.status_code}: {e.response.text}"
-                    st.error(f"Falha ao criar experimento: {error_message}")
+                    handle_api_error(e, "Criar Solicitação")
 
-# Usa um "expander" para não poluir a tela se a lista for grande
-if st.session_state.agendamentos:
-    with st.expander("Ver solicitações criadas nesta sessão", expanded=True):
-        st.table([{"ID do Agendamento": k, "ID do Experimento (eLab)": v} for k, v in st.session_state.agendamentos.items()])
+# =========================
+# ABA 2: ACOMPANHAMENTO E LAUDOS
+# =========================
+with tab2:
+    st.header("Acompanhamento e Laudo da Análise")
+    ag_key_input = st.text_input("Informe o ID de Referência (Agendamento) da solicitação")
 
-st.divider()
+    if st.button("Consultar Status", use_container_width=True):
+        st.session_state.last_consulted_id = ag_key_input.strip()
+        st.session_state.pdf_info = {"bytes": None, "name": None} # Limpa PDF anterior
 
-# 4) Ver status
-st.subheader("4) Consultar status da solicitação")
-
-# Campo para digitar chave
-ag_key = st.text_input("Chave do agendamento")
-
-# Verifica se a chave é válida
-if ag_key.strip() and ag_key in st.session_state.agendamentos:
-    exp_id = st.session_state.agendamentos[ag_key.strip()]
-
-    try:
-        with st.spinner("Buscando status..."):
-            response = requests.get(
-                f"{BACKEND_URL}/experimentos/{exp_id}/status",
-                headers=api_headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            status = data['status']
-
-            if status == 'None':
-                st.info("🔄 Solicitação pendente. Aguardando processamento.")
-            elif status == '1':
-                st.info("⏳ Solicitação em Andamento.")
-            elif status == '2':
-                st.success("✅ Solicitação Concluída!")
-                st.balloons()
-            elif status == '3':
-                st.warning("⚠️ Solicitação Requer Reavaliação.")
-            elif status == '4':
-                st.error("❌ Solicitação Falhou.")
-            else:
-                st.warning(f"⚠️ Status desconhecido: '{status}'.")
-
-        # Só ativa o autorefresh se ainda não estiver concluído
-        if status != '2':
-            st_autorefresh(interval=30 * 1000, key="status_refresh")
-
-    except requests.exceptions.RequestException as e:
-        error_message = str(e)
-        if e.response is not None:
+    if st.session_state.last_consulted_id:
+        ag_key = st.session_state.last_consulted_id
+        if not ag_key:
+            st.warning("Informe um ID de Referência para consultar.")
+        elif ag_key not in st.session_state.agendamentos:
+            st.error(f"ID de Referência '{ag_key}' não encontrado nesta sessão.")
+        else:
+            exp_id = st.session_state.agendamentos[ag_key]
+            st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
             try:
-                error_detail = e.response.json().get("detail", e.response.text)
-                error_message = f"Erro {e.response.status_code}: {error_detail}"
-            except:
-                error_message = f"Erro {e.response.status_code}: {e.response.text}"
-        st.error(f"Erro ao consultar status: {error_message}")
+                status = api_get_status(api_headers, exp_id)
+                status_messages = {
+                    'None': ("Pendendo", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
+                    '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
+                }
+                status_label, status_icon = status_messages.get(status, ("Desconhecido", "❓"))
+                st.metric(label="Status da Análise", value=status_label, delta=status_icon)
 
-elif ag_key.strip():
-    st.error("Chave não encontrada nesta sessão.")
+                if status == '2': # Se concluída, oferece o download do PDF
+                    st.divider()
+                    st.subheader("Gerar Laudo em PDF")
+                    include_changelog = st.checkbox("Incluir histórico de alterações no PDF")
+                    if st.button("Gerar PDF", type="primary", use_container_width=True):
+                        with st.spinner("Gerando PDF..."):
+                            try:
+                                pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
+                                st.session_state.pdf_info["bytes"] = pdf_bytes
+                                st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
+                            except requests.exceptions.RequestException as e:
+                                handle_api_error(e, "Gerar PDF")
+                else: # Se não concluída, ativa o auto-refresh
+                    st.info("A página será atualizada automaticamente a cada 30 segundos.")
+                    st_autorefresh(interval=30 * 1000, key="status_refresh")
+            except requests.exceptions.RequestException as e:
+                handle_api_error(e, f"Consultar Status (ID: {ag_key})")
+    
+    # Botão de download só aparece se um PDF foi gerado com sucesso.
+    if st.session_state.pdf_info.get("bytes"):
+        st.download_button(label="⬇️ Baixar Laudo Gerado", data=st.session_state.pdf_info["bytes"],
+                           file_name=st.session_state.pdf_info["name"], mime="application/pdf", use_container_width=True)
 
-st.divider()
+# =========================
+# ABA 3: ADMINISTRAÇÃO
+# =========================
+with tab3:
+    st.header("Administração do Ambiente")
+    st.markdown("Use estas ferramentas para configurar e verificar o ambiente no eLabFTW.")
 
-# 5) Baixar PDF
-st.subheader("5) Baixar laudo em PDF")
-with st.container(border=True):
-    with st.form("form_pdf"):
-        ag_key_pdf = st.text_input("Chave do agendamento")
-        include_changelog = st.checkbox("Incluir changelog no PDF", value=False)
-        go_pdf = st.form_submit_button("Gerar e Baixar Laudo")
+    st.subheader("Inicializar Estruturas Essenciais")
+    st.markdown("Esta ação verifica se o **Tipo de Item 'Pesquisador'** existe no seu eLabFTW. Se não existir, ele será criado automaticamente.")
+    if st.button("Verificar Estruturas", use_container_width=True):
+        try:
+            with st.spinner("Verificando..."):
+                api_initialize(api_headers)
+        except requests.exceptions.RequestException as e:
+            handle_api_error(e, "Inicializar Ambiente")
 
-        if go_pdf:
-            ag_key_pdf = ag_key_pdf.strip()
-            # Limpa qualquer PDF de uma tentativa anterior
-            st.session_state.pdf_bytes = None
-            st.session_state.pdf_name = None
-
-            if not ag_key_pdf:
-                st.error("Informe a chave do agendamento.")
-            elif ag_key_pdf not in st.session_state.agendamentos:
-                st.error("Chave não encontrada nesta sessão.")
-            else:
-                try:
-                    exp_id = st.session_state.agendamentos[ag_key_pdf]
-
-                    # 1. PRIMEIRO, VERIFICA O STATUS
-                    with st.spinner("Verificando status da análise..."):
-                        status_response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/status", headers=api_headers)
-                        status_response.raise_for_status()
-                        status_data = status_response.json()
-                        status_code = status_data.get("status")
-
-                    # 2. SÓ GERA O PDF SE O STATUS FOR DE CONCLUSÃO (2)
-                    if status_code == "2":
-                        with st.spinner(f"Análise concluída! Gerando PDF..."):
-                            params = {"include_changelog": include_changelog}
-                            pdf_response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/pdf", headers=api_headers, params=params)
-                            pdf_response.raise_for_status()
-
-                            st.session_state.pdf_bytes = pdf_response.content
-                            st.session_state.pdf_name = f"laudo_ag_{ag_key_pdf}.pdf"
-                            st.success("PDF pronto para download!")
-                    else:
-                        # Se não estiver concluído, informa o usuário e não tenta baixar o PDF
-                        st.warning(f"⚠️ A análise ainda não foi concluída (Status: '{status_code}'). O laudo só pode ser gerado ao final do processo.")
-
-                except requests.exceptions.RequestException as e:
-                    error_message = str(e)
-                    if e.response is not None:
-                        try:
-                            error_detail = e.response.json().get("detail", e.response.text)
-                            error_message = f"Erro {e.response.status_code}: {error_detail}"
-                        except:
-                            error_message = f"Erro {e.response.status_code}: {e.response.text}"
-                    st.error(f"Erro ao comunicar com o servidor: {error_message}")
-
-# O botão de download só aparece se os bytes do PDF existirem na sessão
-if st.session_state.pdf_bytes and st.session_state.pdf_name:
-    st.download_button(
-        label="⬇️ Baixar Laudo",
-        data=st.session_state.pdf_bytes,
-        file_name=st.session_state.pdf_name,
-        mime="application/pdf"
-    )
-
-st.divider()
+    st.divider()
+    st.subheader("Dados da Sessão Atual")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Pesquisadores Cadastrados**")
+        st.json(st.session_state.researchers_session, expanded=False)
+    with col2:
+        st.markdown("**Solicitações Criadas**")
+        st.json(st.session_state.agendamentos, expanded=False)

@@ -8,14 +8,14 @@ Base = declarative_base()
 class Experiment(Base):
     __tablename__ = "experiments"
     id = Column(String, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    researcher_id = Column(Integer, ForeignKey("researchers.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime, default=datetime.now())
-    user = relationship("User", back_populates="experiments")
+    researcher = relationship("Researcher", back_populates="experiments")
 
-class User(Base):
-    __tablename__ = "users"
+class Researcher(Base):
+    __tablename__ = "researchers"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
     password = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.now())
-    experiments = relationship("Experiment", back_populates="user", cascade="all, delete-orphan")
+    experiments = relationship("Experiment", back_populates="researcher", cascade="all, delete-orphan")
