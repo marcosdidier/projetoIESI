@@ -330,4 +330,4 @@ with tab3:
 # Rodapé
 # -------------------------
 gradient_bar()
-st.caption("LIACLI • Universidade — Ambiente de demonstração. Para suporte, contate o responsável pelo laboratório.")
+st.caption("LIACLI | UFPE — Ambiente de demonstração. Para suporte, contate o responsável pelo laboratório.")
