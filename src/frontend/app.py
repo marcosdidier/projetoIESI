@@ -275,7 +275,7 @@ with tab2:
             try:
                 status = api_get_status(api_headers, exp_id)
                 status_messages = {
-                    'None': ("Pendendo", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
+                    'None': ("Pendente", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
                     '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
                 }
                 status_label, status_icon = status_messages.get(status, (status, "❓"))
