@@ -1,17 +1,18 @@
-# backend/main.py
+# backend/main.py (CORRIGIDO)
 from fastapi import FastAPI, HTTPException, Header, Body
 from typing import Dict, Any
 import elab_service  # Importa o nosso módulo de serviço
 
 # Define os modelos de dados para a API (ajuda na documentação e validação)
 from pydantic import BaseModel
+from datetime import datetime
 
-class PatientRequest(BaseModel):
+class ResearcherRequest(BaseModel):
     name: str
 
 class ExperimentRequest(BaseModel):
     agendamento_id: str
-    item_paciente_id: int
+    item_pesquisador_id: int
     display_name: str
     tipo_amostra: str
 
@@ -40,24 +41,24 @@ def initialize_elab(
     elab_api_key: str = Header(...)
 ):
     try:
-        item_type_id = elab_service.ensure_item_type_patient(elab_url, elab_api_key, True)
-        template_id = elab_service.ensure_template(elab_url, elab_api_key, True)
+        item_type_id = elab_service.ensure_item_type_researcher(elab_url, elab_api_key, True)
+        # CORREÇÃO: A lógica do template foi removida daqui, pois agora é gerenciada no eLabFTW
         return {
             "item_type_id": item_type_id,
-            "template_id": template_id
+            "message": "O Tipo de Item 'Pesquisador' foi verificado/criado. O template agora é gerenciado no eLabFTW."
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Endpoint para cadastrar paciente
-@app.post("/pacientes")
-def create_patient(
-    request: PatientRequest,
+# Endpoint para cadastrar pesquisador
+@app.post("/pesquisadores")
+def create_researcher(
+    request: ResearcherRequest,
     elab_url: str = Header(...),
     elab_api_key: str = Header(...)
 ):
     try:
-        item_id = elab_service.register_patient(elab_url, elab_api_key, True, request.name)
+        item_id = elab_service.register_researcher(elab_url, elab_api_key, True, request.name)
         return {"name": request.name, "item_id": item_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -71,18 +72,18 @@ def create_new_experiment(
 ):
     try:
         # Lógica para criar o título e o dicionário de variáveis
-        from datetime import datetime
         title = f"[AG:{request.agendamento_id}] Análises {request.display_name} - {datetime.now().date().isoformat()}"
+        
         vars_dict = {
             "agendamento_id": request.agendamento_id,
-            "item_paciente_id": request.item_paciente_id,
+            "item_pesquisador_id": request.item_pesquisador_id,
             "data_coleta": datetime.now().isoformat(timespec="minutes"),
             "tipo_amostra": request.tipo_amostra,
         }
         
-        # Cria o experimento e o linka ao item do paciente
+        # Cria o experimento e o linka ao item do pesquisador
         exp_id = elab_service.create_experiment(elab_url, elab_api_key, True, title, vars_dict)
-        elab_service.link_experiment_to_item(elab_url, elab_api_key, True, exp_id, request.item_paciente_id)
+        elab_service.link_experiment_to_item(elab_url, elab_api_key, True, exp_id, request.item_pesquisador_id)
         
         status = elab_service.get_status(elab_url, elab_api_key, True, exp_id)
         return {"agendamento_id": request.agendamento_id, "experiment_id": exp_id, "status": status}
