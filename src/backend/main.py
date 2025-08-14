@@ -1,79 +1,98 @@
-# backend/main.py (CORRIGIDO)
-from fastapi import FastAPI, HTTPException, Header, Body
-from typing import Dict, Any
-import elab_service  # Importa o nosso módulo de serviço
+# backend/main.py (REFATORADO E COMENTADO)
 
-# Define os modelos de dados para a API (ajuda na documentação e validação)
+from fastapi import FastAPI, Depends, HTTPException, Header
+from typing import Dict, Any
 from pydantic import BaseModel
 from datetime import datetime
 
+import elab_service  # Nosso módulo que conversa com a API do eLabFTW
+
+# --- Modelos de Dados (Pydantic) ---
+# Define o formato esperado para os dados nas requisições,
+# garantindo validação automática e documentação.
+
 class ResearcherRequest(BaseModel):
+    """Corpo da requisição para cadastrar um novo pesquisador."""
     name: str
 
 class ExperimentRequest(BaseModel):
+    """Corpo da requisição para criar um novo experimento."""
     agendamento_id: str
     item_pesquisador_id: int
     display_name: str
     tipo_amostra: str
 
+class ElabCredentials(BaseModel):
+    """Estrutura para agrupar as credenciais da API."""
+    url: str
+    api_key: str
+
+# --- Dependências (FastAPI) ---
+# Funções que o FastAPI pode injetar automaticamente nos endpoints.
+
+def get_elab_credentials(
+    elab_url: str = Header(..., description="URL da instância do eLabFTW."),
+    elab_api_key: str = Header(..., description="Chave da API do eLabFTW com permissão de escrita.")
+) -> ElabCredentials:
+    """
+    Extrai as credenciais dos cabeçalhos da requisição e as retorna em um objeto.
+    Isso evita repetir 'elab_url' e 'elab_api_key' em todas as funções de endpoint.
+    """
+    if not elab_url or not elab_api_key:
+        raise HTTPException(status_code=400, detail="Os cabeçalhos 'elab-url' e 'elab-api-key' são obrigatórios.")
+    return ElabCredentials(url=elab_url, api_key=elab_api_key)
+
+
+# --- Configuração da Aplicação FastAPI ---
 app = FastAPI(
     title="LIACLI Backend API",
-    description="API que serve como gateway para o eLabFTW.",
-    version="1.0.0"
+    description="API que serve como um gateway inteligente para o eLabFTW, simplificando operações comuns.",
+    version="1.1.0" # Versão atualizada para refletir a refatoração
 )
 
-# Endpoint para testar a conexão (usado no sidebar do front)
-@app.post("/test-connection")
-def test_connection(
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
-):
+# --- Endpoints da API ---
+
+@app.post("/test-connection", summary="Testa a Conexão com a API do eLabFTW")
+def test_connection(creds: ElabCredentials = Depends(get_elab_credentials)):
+    """Verifica se a URL e a API Key fornecidas são válidas."""
     try:
-        elab_service.GET(elab_url, elab_api_key, True, "items_types")
+        elab_service.GET(creds.url, creds.api_key, True, "items_types")
         return {"status": "ok", "message": "Conexão com a API do eLabFTW bem-sucedida."}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Endpoint para criar o ItemType e o Template
-@app.post("/initialize")
-def initialize_elab(
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
-):
+@app.post("/initialize", summary="Garante Estruturas Essenciais no eLabFTW")
+def initialize_elab(creds: ElabCredentials = Depends(get_elab_credentials)):
+    """Garante que o 'Tipo de Item' para Pesquisador existe no eLabFTW."""
     try:
-        item_type_id = elab_service.ensure_item_type_researcher(elab_url, elab_api_key, True)
-        # CORREÇÃO: A lógica do template foi removida daqui, pois agora é gerenciada no eLabFTW
+        item_type_id = elab_service.ensure_item_type_researcher(creds.url, creds.api_key, True)
         return {
             "item_type_id": item_type_id,
-            "message": "O Tipo de Item 'Pesquisador' foi verificado/criado. O template agora é gerenciado no eLabFTW."
+            "message": "O Tipo de Item 'Pesquisador' foi verificado com sucesso."
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Endpoint para cadastrar pesquisador
-@app.post("/pesquisadores")
-def create_researcher(
-    request: ResearcherRequest,
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
-):
+@app.post("/pesquisadores", summary="Cadastra um Novo Pesquisador")
+def create_researcher(request: ResearcherRequest, creds: ElabCredentials = Depends(get_elab_credentials)):
+    """Cria um novo item do tipo 'Pesquisador' no eLabFTW."""
     try:
-        item_id = elab_service.register_researcher(elab_url, elab_api_key, True, request.name)
+        item_id = elab_service.register_researcher(creds.url, creds.api_key, True, request.name)
         return {"name": request.name, "item_id": item_id}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Endpoint para criar experimento
-@app.post("/experimentos")
-def create_new_experiment(
-    request: ExperimentRequest,
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
-):
+@app.post("/experimentos", summary="Cria um Novo Experimento")
+def create_new_experiment(request: ExperimentRequest, creds: ElabCredentials = Depends(get_elab_credentials)):
+    """
+    Cria um novo experimento no eLabFTW a partir de um template,
+    preenchendo os dados e vinculando-o a um pesquisador.
+    """
     try:
-        # Lógica para criar o título e o dicionário de variáveis
+        # Monta o título do experimento de forma padronizada
         title = f"[AG:{request.agendamento_id}] Análises {request.display_name} - {datetime.now().date().isoformat()}"
         
+        # Agrupa as variáveis que serão substituídas no corpo do template
         vars_dict = {
             "agendamento_id": request.agendamento_id,
             "item_pesquisador_id": request.item_pesquisador_id,
@@ -81,38 +100,29 @@ def create_new_experiment(
             "tipo_amostra": request.tipo_amostra,
         }
         
-        # Cria o experimento e o linka ao item do pesquisador
-        exp_id = elab_service.create_experiment(elab_url, elab_api_key, True, title, vars_dict)
-        elab_service.link_experiment_to_item(elab_url, elab_api_key, True, exp_id, request.item_pesquisador_id)
+        # Orquestra as chamadas de serviço
+        exp_id = elab_service.create_experiment(creds.url, creds.api_key, True, title, vars_dict)
+        elab_service.link_experiment_to_item(creds.url, creds.api_key, True, exp_id, request.item_pesquisador_id)
+        status = elab_service.get_status(creds.url, creds.api_key, True, exp_id)
         
-        status = elab_service.get_status(elab_url, elab_api_key, True, exp_id)
         return {"agendamento_id": request.agendamento_id, "experiment_id": exp_id, "status": status}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Endpoint para checar status
-@app.get("/experimentos/{experiment_id}/status")
-def get_experiment_status(
-    experiment_id: int,
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
-):
+@app.get("/experimentos/{experiment_id}/status", summary="Consulta o Status de um Experimento")
+def get_experiment_status(experiment_id: int, creds: ElabCredentials = Depends(get_elab_credentials)):
+    """Obtém o status atual (ex: 'Em Andamento', 'Concluída') de um experimento."""
     try:
-        status = elab_service.get_status(elab_url, elab_api_key, True, experiment_id)
+        status = elab_service.get_status(creds.url, creds.api_key, True, experiment_id)
         return {"experiment_id": experiment_id, "status": status}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-# Endpoint para baixar PDF
-@app.get("/experimentos/{experiment_id}/pdf")
-def get_experiment_pdf(
-    experiment_id: int,
-    include_changelog: bool = False,
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
-):
+@app.get("/experimentos/{experiment_id}/pdf", summary="Exporta um Experimento como PDF")
+def get_experiment_pdf(experiment_id: int, include_changelog: bool = False, creds: ElabCredentials = Depends(get_elab_credentials)):
+    """Gera e retorna o laudo de um experimento em formato PDF."""
     try:
-        pdf_bytes = elab_service.export_pdf(elab_url, elab_api_key, True, experiment_id, include_changelog=include_changelog)
+        pdf_bytes = elab_service.export_pdf(creds.url, creds.api_key, True, experiment_id, include_changelog=include_changelog)
         from fastapi.responses import Response
         return Response(content=pdf_bytes, media_type="application/pdf")
     except Exception as e:
