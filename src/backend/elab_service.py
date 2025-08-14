@@ -1,49 +1,63 @@
-# backend/elab_service.py (REFATORADO E COMENTADO)
+# backend/elab_service.py
+"""
+Módulo de Serviço para Interação com a API do eLabFTW.
+
+Este arquivo centraliza toda a lógica de comunicação com a API do eLabFTW,
+abstraindo os detalhes das requisições HTTP. As outras partes do backend
+(como main.py) devem utilizar as funções deste módulo para realizar
+operações no eLab, garantindo um ponto único de manutenção e controle.
+"""
 
 import re
-from datetime import datetime
 from typing import Any, Dict, Optional
-import json
-
 import requests
 
-# ==============================================================================
-# MÓDULO DE SERVIÇO ELAB
-# ------------------------------------------------------------------------------
-# Este arquivo é o "motor" da aplicação. Ele contém toda a lógica para se
-# comunicar com a API do eLabFTW. O resto da aplicação (main.py, app.py)
-# utiliza as funções definidas aqui, sem precisar saber os detalhes da API.
-# ==============================================================================
+# --- Constantes de Configuração ---
 
+# Tempo máximo de espera (em segundos) para as requisições à API.
+TIMEOUT = 30
 
-# =========================
-# Constantes de Negócio
-# =========================
-TIMEOUT = 30  # Tempo máximo de espera para cada requisição, em segundos
-
-# Define o nome do "Tipo de Item" que será usado para agrupar os pesquisadores.
+# Título do "Tipo de Item" no eLabFTW que será usado para categorizar os pesquisadores.
+# Este tipo será criado caso não exista.
 ITEM_TYPE_TITLE = "Pesquisador"
 
-# Nome do template que o sistema irá procurar no eLabFTW para usar como base.
-# IMPORTANTE: Este nome deve corresponder exatamente ao título do template no eLabFTW.
+# Título do template de experimento que o sistema buscará no eLabFTW.
+# É crucial que este nome corresponda exatamente ao título do template mestre no eLab.
 TEMPLATE_TITLE_TO_FIND = "Análise Clínica teste"
 
-# ID de um template padrão que será usado caso o template principal não seja encontrado.
-# É uma medida de segurança para evitar que a aplicação pare completamente.
+# ID de um template de segurança (fallback). Caso o template principal não seja
+# encontrado, este será utilizado para evitar a interrupção total do serviço.
 FALLBACK_TEMPLATE_ID = 1
 
 
-# =========================
-# Funções Auxiliares (Helpers)
-# =========================
+# --- Funções Auxiliares de Requisição ---
 
 def _url(base: str, path: str) -> str:
-    """Monta a URL completa para um endpoint da API."""
+    """Constrói a URL completa para um endpoint da API, tratando barras."""
     return f"{base.rstrip('/')}/{path.lstrip('/')}"
 
-def _req(base: str, api_key: str, verify_tls: bool, method: str, path: str,
-         json_body: Optional[Dict] = None, params: Optional[Dict] = None) -> requests.Response:
-    """Função central que executa qualquer requisição HTTP para a API."""
+def _req(
+    base: str, api_key: str, verify_tls: bool, method: str,
+    path: str, json_body: Optional[Dict] = None, params: Optional[Dict] = None
+) -> requests.Response:
+    """
+    Função central para executar requisições HTTP para a API do eLabFTW.
+
+    Args:
+        base: URL base da instância do eLabFTW.
+        api_key: Chave de autorização da API.
+        verify_tls: Booleano para verificar (ou não) o certificado TLS/SSL.
+        method: Método HTTP (GET, POST, PATCH, etc.).
+        path: Caminho do endpoint (ex: '/api/v2/experiments').
+        json_body: Corpo da requisição em formato de dicionário.
+        params: Parâmetros de query da URL.
+
+    Returns:
+        O objeto de resposta da requisição.
+
+    Raises:
+        RuntimeError: Se a resposta da API indicar um erro (status code não for 2xx).
+    """
     headers = {
         "Authorization": api_key,
         "Accept": "application/json",
@@ -58,71 +72,97 @@ def _req(base: str, api_key: str, verify_tls: bool, method: str, path: str,
         timeout=TIMEOUT,
         verify=verify_tls,
     )
-    # Validação da resposta: se não for um código de sucesso, lança um erro claro.
+
+    # Lança uma exceção com detalhes se a requisição falhar.
     if response.status_code not in (200, 201, 204):
-        msg = response.text if response.text else f"status={response.status_code}"
-        if len(msg) > 600: msg = msg[:600] + "... (truncado)"
-        raise RuntimeError(f"{method.upper()} {path} -> {response.status_code}: {msg}")
+        error_msg = response.text or f"status={response.status_code}"
+        if len(error_msg) > 600:
+            error_msg = error_msg[:600] + "... (truncado)"
+        raise RuntimeError(f"{method.upper()} {path} -> {response.status_code}: {error_msg}")
+
     return response
 
-# Wrappers para os métodos HTTP mais comuns, que retornam o conteúdo JSON da resposta.
-def GET(base, key, verify, path, params=None): return _req(base, key, verify, "GET", path, params=params).json()
-def POST(base, key, verify, path, body=None): return _req(base, key, verify, "POST", path, json_body=body or {})
-def PATCH(base, key, verify, path, body=None): _req(base, key, verify, "PATCH", path, json_body=body or {}) # PATCH não precisa retornar corpo
+# Funções "wrapper" para os métodos HTTP mais comuns, simplificando as chamadas.
+def GET(base, key, verify, path, params=None) -> Any:
+    """Executa uma requisição GET e retorna a resposta JSON decodificada."""
+    return _req(base, key, verify, "GET", path, params=params).json()
+
+def POST(base, key, verify, path, body=None) -> requests.Response:
+    """Executa uma requisição POST e retorna o objeto de resposta completo."""
+    return _req(base, key, verify, "POST", path, json_body=body or {})
+
+def PATCH(base, key, verify, path, body=None) -> None:
+    """Executa uma requisição PATCH. Não retorna conteúdo."""
+    _req(base, key, verify, "PATCH", path, json_body=body or {})
 
 def _to_list(data: Any) -> list:
-    """Converte a resposta da API (que pode ser um objeto) em uma lista, se possível."""
+    """
+    Normaliza a resposta da API para sempre retornar uma lista.
+    APIs paginadas frequentemente retornam um dicionário com uma chave como 'items' ou 'data'.
+    """
     if isinstance(data, dict):
-        for k in ("items", "data", "results"):
-            if isinstance(data.get(k), list): return data[k]
+        # Chaves comuns em APIs para listas de resultados.
+        for key in ("items", "data", "results"):
+            if isinstance(data.get(key), list):
+                return data[key]
         return []
     return data if isinstance(data, list) else []
 
 def _find_id_from_response(response: requests.Response, base_url: str, api_key: str, verify_tls: bool, title_to_search: str) -> int:
     """
-    Função auxiliar para extrair o ID de um recurso recém-criado.
-    A API do eLabFTW pode retornar o ID de 3 formas diferentes. Esta função tenta todas.
+    Extrai o ID de um recurso recém-criado a partir da resposta da API.
+
+    A API do eLabFTW pode retornar o ID de diferentes formas. Esta função tenta, em ordem:
+    1. No corpo da resposta JSON (campo 'id').
+    2. No cabeçalho 'Location' da resposta.
+    3. Como último recurso, buscando nos itens recém-criados pelo título.
     """
-    # Abordagem 1: O ID está no corpo da resposta JSON.
+    # Tentativa 1: ID no corpo da resposta.
     if response.content:
         try:
             data = response.json()
             if isinstance(data, dict) and isinstance(data.get("id"), int):
                 return data["id"]
-        except Exception:
-            pass  # Se não for JSON ou não tiver 'id', tenta a próxima abordagem.
+        except requests.exceptions.JSONDecodeError:
+            pass  # Se não for JSON, prossegue para a próxima tentativa.
 
-    # Abordagem 2: O ID está no cabeçalho 'Location'.
-    loc = response.headers.get("Location") or response.headers.get("location")
-    if loc:
-        # Extrai o número do final da URL (ex: /api/v2/experiments/123)
-        m = re.search(r"/(\d+)$", loc)
-        if m:
-            return int(m.group(1))
+    # Tentativa 2: ID no cabeçalho 'Location'.
+    location_header = response.headers.get("Location") or response.headers.get("location")
+    if location_header:
+        match = re.search(r"/(\d+)$", location_header)
+        if match:
+            return int(match.group(1))
 
-    # Abordagem 3 (Último recurso): Buscar nos itens recentes pelo título.
-    # Isso é útil caso a API retorne 201 Created sem corpo e sem header 'Location'.
-    endpoint = "experiments" # Assumindo que estamos procurando por experimentos
-    recent_items = GET(base_url, api_key, verify_tls, endpoint, params={"limit": 5, "order": "desc"})
-    for item in _to_list(recent_items):
-        if (item.get("title") or "").strip() == title_to_search.strip():
-            return int(item["id"])
+    # Tentativa 3: Buscar nos itens recentes pelo título (fallback).
+    # Útil se a API retorna 201 Created sem corpo e sem header 'Location'.
+    try:
+        recent_items = GET(base_url, api_key, verify_tls, "experiments", params={"limit": 5, "order": "desc"})
+        for item in _to_list(recent_items):
+            if (item.get("title") or "").strip() == title_to_search.strip():
+                return int(item["id"])
+    except Exception as e:
+        # Se a busca falhar, não impede o erro final de ser lançado.
+        print(f"Alerta: Falha ao tentar buscar ID por título: {e}")
 
-    # Se nenhuma abordagem funcionou, lança um erro.
-    raise RuntimeError("Não foi possível obter o ID do recurso recém-criado a partir da resposta da API.")
+    raise RuntimeError("Não foi possível extrair o ID do recurso criado da resposta da API.")
 
 
-# =========================
-# Funções de Lógica de Negócio
-# =========================
+# --- Lógica de Negócio Específica do eLabFTW ---
 
 def get_template_object_by_title(base: str, key: str, verify: bool, title: str) -> Dict[str, Any]:
     """
-    Busca um template mestre pelo título. Se não encontrar, busca um template de fallback pelo ID.
-    Retorna o objeto completo do template (dicionário).
+    Busca um template mestre pelo título.
+
+    Se o template principal não for encontrado, tenta carregar um template de fallback
+    pelo ID definido em `FALLBACK_TEMPLATE_ID`.
+
+    Returns:
+        O objeto completo (dicionário) do template encontrado.
+
+    Raises:
+        RuntimeError: Se nem o template principal nem o de fallback forem encontrados.
     """
     try:
-        # Busca na fonte correta de templates mestres.
         all_templates_data = GET(base, key, verify, "experiments_templates")
         all_templates = _to_list(all_templates_data)
 
@@ -130,10 +170,10 @@ def get_template_object_by_title(base: str, key: str, verify: bool, title: str) 
         fallback_template = None
 
         for template in all_templates:
-            # Procura pelo template principal
+            # Compara o título principal (case-insensitive).
             if (template.get("title") or "").strip().lower() == title.strip().lower():
                 found_template = template
-            # Procura pelo template de fallback (converte para string para garantir a comparação)
+            # Procura pelo template de fallback para tê-lo como garantia.
             if str(template.get("id")) == str(FALLBACK_TEMPLATE_ID):
                 fallback_template = template
 
@@ -141,82 +181,120 @@ def get_template_object_by_title(base: str, key: str, verify: bool, title: str) 
             return found_template
         
         if fallback_template:
-            # Imprime um aviso no console do backend se o fallback for usado.
-            print(f"AVISO: Template '{title}' não encontrado. Usando fallback com ID {FALLBACK_TEMPLATE_ID}.")
+            print(f"AVISO: Template '{title}' não encontrado. Usando fallback ID {FALLBACK_TEMPLATE_ID}.")
             return fallback_template
 
-        raise RuntimeError(f"Crítico: Nem o template principal ('{title}') nem o de fallback (ID: {FALLBACK_TEMPLATE_ID}) foram encontrados.")
+        raise RuntimeError(f"Crítico: O template '{title}' e o de fallback (ID: {FALLBACK_TEMPLATE_ID}) não foram encontrados.")
     except Exception as e:
         raise RuntimeError(f"Falha ao buscar a lista de templates da API: {e}")
 
 def ensure_item_type_researcher(base: str, key: str, verify: bool) -> int:
-    """Verifica se o tipo de item 'Pesquisador' existe. Se não, cria e retorna o ID."""
+    """
+    Garante que o tipo de item 'Pesquisador' exista no eLabFTW.
+
+    Se não existir, cria o tipo e retorna seu ID. Caso contrário, apenas retorna o ID existente.
+    Isso torna a aplicação autoconfigurável na primeira execução.
+    """
     all_types = GET(base, key, verify, "items_types")
     for item_type in _to_list(all_types):
         if (item_type.get("title") or "").strip().lower() == ITEM_TYPE_TITLE.lower():
             return int(item_type["id"])
     
-    # Se não encontrou, cria um novo.
-    created = POST(base, key, verify, "items_types", {"title": ITEM_TYPE_TITLE, "body": "Tipo para cadastro de Pesquisadores."})
-    return _find_id_from_response(created, base, key, verify, ITEM_TYPE_TITLE)
+    # Se o loop terminar sem encontrar, cria o novo tipo.
+    print(f"Criando tipo de item '{ITEM_TYPE_TITLE}' no eLabFTW...")
+    response = POST(base, key, verify, "items_types", {"title": ITEM_TYPE_TITLE, "body": "Tipo para cadastro de Pesquisadores do LIACLI."})
+    return _find_id_from_response(response, base, key, verify, ITEM_TYPE_TITLE)
 
-def register_researcher(base: str, key: str, verify: bool, name: str) -> int:
-    """Cria um novo item (pesquisador) e retorna seu ID."""
+def register_researcher_item(base: str, key: str, verify: bool, name: str) -> int:
+    """
+    Cria um novo 'item' do tipo 'Pesquisador' no eLabFTW.
+
+    Args:
+        name: O nome completo do pesquisador.
+
+    Returns:
+        O ID do item recém-criado no eLabFTW.
+    """
     if not name.strip():
         raise ValueError("O nome do pesquisador não pode ser vazio.")
     
+    # Garante que a categoria "Pesquisador" existe antes de criar o item.
     items_type_id = ensure_item_type_researcher(base, key, verify)
+    
+    # Cria o item no eLab.
     response = POST(base, key, verify, "items", {"title": name.strip(), "items_type_id": items_type_id})
     return _find_id_from_response(response, base, key, verify, name)
 
 def create_experiment(base: str, key: str, verify: bool, title: str, vars_dict: Dict[str, Any]) -> int:
     """
-    Cria um novo experimento. Etapas:
-    1. Encontra o template (principal ou fallback).
-    2. Cria um experimento vazio com um título.
-    3. Pega o ID do novo experimento.
-    4. Preenche o corpo do template com as variáveis.
-    5. Atualiza o experimento com o corpo preenchido.
+    Cria um novo experimento no eLabFTW a partir de um template.
+
+    O processo envolve:
+    1. Encontrar o ID do template pelo título.
+    2. Criar um experimento vazio para obter um ID.
+    3. Preencher as variáveis do corpo do template (ex: `{{data_coleta}}`).
+    4. Atualizar (PATCH) o experimento com o corpo preenchido.
+
+    Returns:
+        O ID do experimento recém-criado.
     """
     if not title.strip():
         raise ValueError("O título do experimento não pode ser vazio.")
 
-    # Etapa 1: Encontrar o template
+    # 1. Encontrar o template.
     template_object = get_template_object_by_title(base, key, verify, TEMPLATE_TITLE_TO_FIND)
     template_body = template_object.get("body")
     if not template_body:
-        raise RuntimeError(f"O template '{template_object.get('title')}' foi encontrado, mas seu corpo está vazio.")
+        raise RuntimeError(f"O template '{template_object.get('title')}' está com o corpo vazio.")
 
-    # Etapa 2: Criar o experimento vazio
-    response_obj = _req(base, key, verify, "POST", "experiments", json_body={"title": title.strip()})
-    
-    # Etapa 3: Pegar o ID
+    # 2. Criar o experimento vazio para reservar um ID.
+    response_obj = POST(base, key, verify, "experiments", {"title": title.strip()})
     exp_id = _find_id_from_response(response_obj, base, key, verify, title)
 
-    # Etapa 4: Preencher o corpo
+    # 3. Substituir as variáveis no corpo do template.
     body = template_body
-    for k, v in (vars_dict or {}).items():
-        body = body.replace(f"{{{{{k}}}}}", str(v))
+    for placeholder, value in (vars_dict or {}).items():
+        body = body.replace(f"{{{{{placeholder}}}}}", str(value))
     
-    # Etapa 5: Atualizar o experimento
-    PATCH(base, key, verify, f"experiments/{exp_id}", {"title": title.strip(), "body": body})
+    # 4. Atualizar o experimento com o conteúdo.
+    PATCH(base, key, verify, f"experiments/{exp_id}", {"body": body})
     return exp_id
 
 def link_experiment_to_item(base: str, key: str, verify: bool, exp_id: int, item_id: int):
-    """Vincula um experimento a um item (pesquisador)."""
-    # Tenta o método de link mais comum primeiro.
+    """Vincula um experimento a um item (neste caso, um pesquisador)."""
+    if not all([isinstance(exp_id, int), isinstance(item_id, int)]):
+        raise TypeError("IDs do experimento e do item devem ser inteiros.")
+    
+    # A API do eLab pode ter variações no endpoint de vínculo.
+    # Tenta o método mais comum primeiro.
     try:
         POST(base, key, verify, f"experiments/{exp_id}/items_links/{item_id}", {})
-    except Exception:
-        # Se falhar, tenta um método alternativo.
+    except Exception as e:
+        # Se falhar, tenta um método alternativo que algumas versões da API usam.
+        print(f"Alerta: O link direto falhou ({e}). Tentando método alternativo.")
         POST(base, key, verify, f"experiments/{exp_id}/items_links", {"id": item_id})
 
 def get_status(base: str, key: str, verify: bool, exp_id: int) -> str:
-    """Busca o status de um experimento pelo seu ID."""
+    """Busca o status atual de um experimento pelo seu ID."""
     exp = GET(base, key, verify, f"experiments/{exp_id}")
+    # Retorna o status, tentando diferentes chaves que a API pode usar.
     return str(exp.get("status_name") or exp.get("status_label") or exp.get("status", "desconhecido"))
 
 def export_pdf(base: str, key: str, verify: bool, exp_id: int, *, include_changelog: bool = False) -> bytes:
-    """Exporta um experimento como PDF, retornando os bytes do arquivo."""
-    response_obj = _req(base, key, verify, "GET", f"experiments/{exp_id}", params={"format": "pdf", "changelog": "true" if include_changelog else "false"})
+    """
+    Exporta um experimento como um arquivo PDF.
+
+    Args:
+        exp_id: O ID do experimento a ser exportado.
+        include_changelog: Se True, o histórico de alterações será incluído no PDF.
+
+    Returns:
+        Os bytes brutos do arquivo PDF gerado.
+    """
+    # A exportação é feita chamando o endpoint do experimento com o parâmetro 'format=pdf'.
+    params = {"format": "pdf"}
+    if include_changelog:
+        params["changelog"] = "true"
+        
+    response_obj = _req(base, key, verify, "GET", f"experiments/{exp_id}", params=params)
     return response_obj.content
