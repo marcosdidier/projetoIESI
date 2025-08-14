@@ -1,7 +1,4 @@
-# frontend/app.py
-# Este é o front-end da aplicação, construído com Streamlit.
-# Ele é responsável apenas pela interface e por se comunicar com o nosso back-end FastAPI.
-
+# frontend/app.py (CORRIGIDO)
 import streamlit as st
 import requests
 from typing import Dict, Optional, List, Any
@@ -94,9 +91,9 @@ with tab1:
                 else:
                     try:
                         with st.spinner(f"Cadastrando '{name.strip()}'..."):
-                            # O endpoint continua sendo /pacientes, conforme backend
                             json_body = {"name": name.strip()}
-                            response = requests.post(f"{BACKEND_URL}/pacientes", headers=api_headers, json=json_body)
+                            # CORREÇÃO: Endpoint atualizado para /pesquisadores
+                            response = requests.post(f"{BACKEND_URL}/pesquisadores", headers=api_headers, json=json_body)
                             response.raise_for_status()
                             data = response.json()
                             item_id = data["item_id"]
@@ -153,7 +150,8 @@ with tab1:
                     with st.spinner("Criando solicitação no eLabFTW..."):
                         json_body = {
                             "agendamento_id": agendamento_id.strip(),
-                            "item_paciente_id": final_item_id, # Chave do backend, não pode ser alterada
+                            # CORREÇÃO: Chave do body alinhada com o backend
+                            "item_pesquisador_id": final_item_id,
                             "display_name": display_name.strip(),
                             "tipo_amostra": tipo_amostra.strip() or "Não informado",
                         }
@@ -247,10 +245,10 @@ with tab3:
     st.markdown("Ferramentas para garantir que o eLabFTW está configurado corretamente para esta aplicação.")
 
     st.subheader("Estruturas Essenciais no eLabFTW")
+    # CORREÇÃO: Texto de ajuda atualizado para ser preciso
     st.markdown("""
-    Esta ação verifica se o **Tipo de Item 'Paciente'** e o **Template 'Análise Clínica Padrão'**
+    Esta ação verifica se o **Tipo de Item 'Pesquisador'** e o **Template 'Análise Clínica Padrão'**
     existem no seu eLabFTW. Se não existirem, serão criados.
-    *(Nota: A entidade no eLabFTW é chamada 'Paciente' por padrão no backend)*.
     """)
     if st.button("Verificar e Criar Estruturas", use_container_width=True):
         try:
@@ -258,7 +256,7 @@ with tab3:
                 response = requests.post(f"{BACKEND_URL}/initialize", headers=api_headers)
                 response.raise_for_status()
                 data = response.json()
-                st.success(f"OK! Tipo de Item 'Paciente' garantido (ID: {data['item_type_id']}).")
+                st.success(f"OK! Tipo de Item 'Pesquisador' garantido (ID: {data['item_type_id']}).")
                 st.success(f"OK! Template 'Análise Clínica Padrão' garantido (ID: {data['template_id']}).")
         except requests.exceptions.RequestException as e:
             handle_api_error(e, "Inicializar Ambiente")
