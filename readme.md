@@ -43,6 +43,15 @@ Este projeto é uma aplicação que integra uma interface de usuário construíd
 
 ## Uso
 
+### Executar o Backend
+
+1. Inicie o backend com FastAPI:
+   ```bash
+   uvicorn src.backend.main:app --host 127.0.0.1 --port 8000
+   ```
+
+2. Acesse a documentação interativa da API em: [http://localhost:8000/docs](http://localhost:8000/docs).
+3. 
 ### Executar o Frontend
 
 1. Inicie o frontend com Streamlit:
@@ -52,15 +61,6 @@ Este projeto é uma aplicação que integra uma interface de usuário construíd
    ```
 
 2. Acesse a interface no navegador em: [http://localhost:8501](http://localhost:8501).
-
-### Executar o Backend
-
-1. Inicie o backend com FastAPI:
-   ```bash
-   uvicorn src.backend.main:app --host 127.0.0.1 --port 8000
-   ```
-
-2. Acesse a documentação interativa da API em: [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ## Funcionalidades
 
@@ -108,4 +108,5 @@ Este projeto é uma aplicação que integra uma interface de usuário construíd
 ## Licença
 
 Este projeto está licenciado sob a [MIT License](LICENSE).
+
 
