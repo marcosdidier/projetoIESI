@@ -241,8 +241,17 @@ def create_experiment(base: str, key: str, verify: bool, title: str, vars_dict: 
     if not title.strip():
         raise ValueError("O título do experimento não pode ser vazio.")
 
+    # Determine o template a usar com base na categoria de amostra fornecida.
+    tipo_amostra = (vars_dict or {}).get("tipo_amostra", "")
+    tipo_norm = (tipo_amostra or "").strip().lower()
+    if tipo_norm == "sangue":
+        template_to_find = "Análise Clínica teste"
+    else:
+        template_to_find = TEMPLATE_TITLE_TO_FIND
+
     # 1. Encontrar o template.
-    template_object = get_template_object_by_title(base, key, verify, TEMPLATE_TITLE_TO_FIND)
+    print(f"[DEBUG] Selected template for tipo_amostra='{tipo_amostra}': '{template_to_find}'")
+    template_object = get_template_object_by_title(base, key, verify, template_to_find)
     template_body = template_object.get("body")
     if not template_body:
         raise RuntimeError(f"O template '{template_object.get('title')}' está com o corpo vazio.")

@@ -109,14 +109,18 @@ def api_create_experiment(headers: Dict, body: Dict) -> Dict:
     response.raise_for_status()
     return response.json()
 
-def api_get_status(headers: Dict, exp_id: int) -> str:
-    response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/status", headers=headers)
+def api_get_status(headers: Dict, exp_id: int, researcher_id: int) -> str:
+    headers_with_researcher = dict(headers)
+    headers_with_researcher.update({"researcher-id": str(researcher_id)})
+    response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/status", headers=headers_with_researcher)
     response.raise_for_status()
     return response.json().get('status', 'desconhecido')
 
-def api_get_pdf(headers: Dict, exp_id: int, include_changelog: bool) -> bytes:
+def api_get_pdf(headers: Dict, exp_id: int, include_changelog: bool, researcher_id: int) -> bytes:
     params = {"include_changelog": include_changelog}
-    response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/pdf", headers=headers, params=params)
+    headers_with_researcher = dict(headers)
+    headers_with_researcher.update({"researcher-id": str(researcher_id)})
+    response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/pdf", headers=headers_with_researcher, params=params)
     response.raise_for_status()
     return response.content
 
@@ -180,9 +184,12 @@ with tab1:
         with st.form("form_experiment"):
             c1, c2 = st.columns(2)
             with c1:
-                agendamento_id = st.text_input("ID de Referência (Agendamento)", help="Código único para referência externa. Ex: 'PROJ-X-001'", placeholder="PROJ-X-001")
+                agendamento_id = st.text_input("Nome da Solicitação", help="Nome único para referência externa. Ex: 'PROJ-X-001'", placeholder="PROJ-X-001")
             with c2:
-                tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue Total", help="Ex.: Sangue Total, Soro, Plasma, etc.")
+                # Categoria de amostras (pode ser estendida no futuro)
+                tipo_options = ["Sangue"]
+                tipo_amostra = st.selectbox("Tipo de Amostra", options=tipo_options, index=0,
+                                            help="Selecione a categoria da amostra.")
 
             if st.form_submit_button("Criar Solicitação no eLabFTW", type="primary", use_container_width=True):
                 user_name = st.session_state.user.get("name")
@@ -190,9 +197,9 @@ with tab1:
                 if not researcher_info:
                     st.error("Usuário logado não encontrado entre os pesquisadores cadastrados.")
                 elif not agendamento_id.strip():
-                    st.error("O ID de Referência (Agendamento) é obrigatório.")
+                    st.error("O nome da solicitação é obrigatório.")
                 elif agendamento_id.strip() in st.session_state.agendamentos:
-                    st.error("Este ID de Referência já foi usado. Crie um novo.")
+                    st.error("Este nome de solicitação já foi usado. Crie um novo.")
                 else:
                     try:
                         local_id = researcher_info["id"]
@@ -204,7 +211,7 @@ with tab1:
                                 "researcher_id": local_id,
                                 "item_pesquisador_id": elab_item_id or 0,
                                 "display_name": user_name.strip(),
-                                "tipo_amostra": tipo_amostra.strip() or "Não informado",
+                                "tipo_amostra": (tipo_amostra or "").strip() or "Não informado",
                                 "user": {
                                     "id": st.session_state.user.get("id"),
                                     "name": st.session_state.user.get("name"),
@@ -324,10 +331,18 @@ with tab2:
         st.warning("Você precisa estar logado para acessar o acompanhamento e laudos.")
         st.info("Acesse a aba 'Usuários' para fazer login.")
     else:
-        agendamentos_existentes = list(st.session_state.agendamentos.keys()) #
+        # Mostra somente as solicitações do usuário logado
+        user_name = st.session_state.user.get("name")
+        researcher_data = st.session_state.researchers_session.get(user_name, {})
+        user_experiments = researcher_data.get("experiments", [])
+        ag_options = [exp["id"] for exp in user_experiments]
+
+        if not ag_options:
+            st.info("Você não tem solicitações registradas. Crie uma nova na aba 'Nova Solicitação de Análise'.")
+
         ag_key_selecionado = st.selectbox(
-            "Selecione o ID de Referência da solicitação",
-            options=sorted(agendamentos_existentes, reverse=True),
+            "Selecione o Nome da Solicitação (apenas as suas)",
+            options=sorted(ag_options, reverse=True),
             index=None,
             placeholder="Escolha uma solicitação para consultar..."
         )
@@ -339,12 +354,14 @@ with tab2:
         if st.session_state.last_consulted_id:
             ag_key = st.session_state.last_consulted_id
             if ag_key not in st.session_state.agendamentos:
-                st.error(f"ID de Referência '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
+                st.error(f"Nome da solicitação '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
             else:
                 exp_id = st.session_state.agendamentos[ag_key] #
-                st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
+                st.info(f"Consultando Solicitação: **{ag_key}** (Experimento eLab: **{exp_id}**)")
                 try:
-                    status = api_get_status(api_headers, exp_id)
+                    # Envia o header com o ID do pesquisador para verificação no backend
+                    researcher_id = st.session_state.user.get("id")
+                    status = api_get_status(api_headers, exp_id, researcher_id)
                     status_messages = {
                         'None': ("Pendente", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
                         '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
@@ -359,7 +376,8 @@ with tab2:
                         if st.button("Gerar PDF", type="primary", use_container_width=True):
                             with st.spinner("Gerando PDF..."):
                                 try:
-                                    pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
+                                    researcher_id = st.session_state.user.get("id")
+                                    pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog, researcher_id)
                                     st.session_state.pdf_info["bytes"] = pdf_bytes
                                     st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
                                 except requests.exceptions.RequestException as e:
