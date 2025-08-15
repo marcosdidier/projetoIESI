@@ -105,8 +105,10 @@ def api_create_researcher(headers: Dict, name: str, password: str, role: str = "
     response.raise_for_status()
     return response.json()
 
-def api_create_experiment(headers: Dict, body: Dict) -> Dict:
-    response = requests.post(f"{BACKEND_URL}/experimentos", headers=headers, json=body)
+def api_create_experiment(headers: Dict, body: Dict, researcher_id: int) -> Dict:
+    headers_with_researcher = dict(headers)
+    headers_with_researcher.update({"researcher-id": str(researcher_id)})
+    response = requests.post(f"{BACKEND_URL}/experimentos", headers=headers_with_researcher, json=body)
     response.raise_for_status()
     return response.json()
 
@@ -116,6 +118,17 @@ def api_get_status(headers: Dict, exp_id: int, researcher_id: int) -> str:
     response = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/status", headers=headers_with_researcher)
     response.raise_for_status()
     return response.json().get('status', 'desconhecido')
+# Adicione esta função em frontend/app.py
+
+def api_set_status(headers: Dict, exp_id: int, researcher_id: int, status_code: Any) -> None:
+    """Envia uma requisição para alterar o status de um experimento."""
+    headers_with_researcher = dict(headers)
+    headers_with_researcher.update({"researcher-id": str(researcher_id)})
+    
+    json_body = {"status": status_code}
+    
+    response = requests.post(f"{BACKEND_URL}/experimentos/{exp_id}/set-status", headers=headers_with_researcher, json=json_body)
+    response.raise_for_status()
 
 def api_get_pdf(headers: Dict, exp_id: int, include_changelog: bool, researcher_id: int) -> bytes:
     params = {"include_changelog": include_changelog}
@@ -224,7 +237,7 @@ with tab1:
                                     "email": st.session_state.user.get("email")
                                 }
                             }
-                            data = api_create_experiment(api_headers, json_body)
+                            data = api_create_experiment(api_headers, json_body, researcher_id=local_id)
 
                             # 1. Atualiza a lista geral de agendamentos (como já fazia antes)
                             st.session_state.agendamentos[agendamento_id.strip()] = data["experiment_id"]
@@ -499,131 +512,6 @@ with tab3:
                         st.info(f"**ID da Referência (Agendamento):** `{exp['id']}`\n\n**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
 
 # =========================
-# ABA 3: LANÇAR RESULTADOS (MÁQUINAS) - atualizado para usar templates dinâmicos
-# =========================
-with tab4:
-    st.header("Inserir Resultados de Análise (Máquina)")
-
-    # Access control: only 'maquina' role can use this tab
-    if not st.session_state.user:
-        st.warning("Você precisa estar logado como máquina para executar esta ação.")
-        st.info("Acesse a aba 'Usuários' para fazer login com uma conta de máquina.")
-    elif st.session_state.user.get('role') != 'maquina':
-        st.error("Acesso negado: apenas contas com role 'maquina' podem enviar resultados automaticamente.")
-    else:
-        with st.form("form_update_results"):
-            # Seleção do template (por enquanto apenas 'Sangue' disponível)
-            tipo_options = ["Sangue"]
-            tipo_choice = st.selectbox("Template (Tipo de Amostra)", options=tipo_options, index=0, help="Selecione o template a ser usado para preencher os campos.")
-
-            # Seleciona a solicitação (agendamento) a ser atualizada
-            agendamentos_para_update = list(st.session_state.agendamentos.keys())
-            ag_key_update = st.selectbox(
-                "Selecione uma solicitação para atualizar:",
-                options=sorted(agendamentos_para_update),
-                index=None,
-                placeholder="Selecione um agendamento...",
-                key="update_ag_key_machine"
-            )
-
-            st.divider()
-
-            # Tenta carregar o template e extrair os placeholders (campos) do backend
-            placeholders = []
-            template_title = None
-            try:
-                # Solicita o template apropriado ao backend que por sua vez consulta o eLab
-                resp = requests.get(f"{BACKEND_URL}/templates", headers=api_headers, params={"tipo_amostra": tipo_choice})
-                resp.raise_for_status()
-                tpl = resp.json()
-                placeholders = tpl.get("placeholders", []) or []
-                template_title = tpl.get("title")
-            except requests.exceptions.RequestException as e:
-                # Mostra erro amigável e continua com lista vazia de campos
-                handle_api_error(e, "Carregar Template")
-                placeholders = []
-
-            if template_title:
-                st.caption(f"Template carregado: {template_title} — campos: {', '.join(placeholders) if placeholders else 'nenhum'}")
-
-            # Renderiza dinamicamente os campos do template
-            field_values = {}
-            if not placeholders:
-                st.info("Nenhum campo detectado no template. Você pode enviar um JSON na aba 'Editar Experimento' se desejar.")
-            else:
-                st.markdown("Preencha os campos abaixo com os valores que serão enviados ao eLab:")
-                for ph in placeholders:
-                    # Usa o próprio placeholder como label. Chave única para Streamlit.
-                    key = f"machine_field_{tipo_choice}_{ph}"
-                    field_values[ph] = st.text_input(ph, value="", key=key)
-
-            submit_update = st.form_submit_button("Enviar Resultados (Máquina)", type="primary", use_container_width=True)
-
-            if submit_update:
-                if not ag_key_update:
-                    st.error("Por favor, selecione um agendamento.")
-                else:
-                    exp_id = st.session_state.agendamentos.get(ag_key_update)
-                    if not exp_id:
-                        st.error("ID do experimento não encontrado para este agendamento.")
-                    else:
-                        # Monta o dicionário results a partir dos campos do template
-                        if placeholders:
-                            results_to_update = {k: (v if v is not None else "") for k, v in field_values.items()}
-                        else:
-                            # Sem placeholders detectados, envia um payload vazio para indicar erro no template
-                            st.error("Template não contém campos válidos para atualizar. Use a aba 'Editar Experimento' para enviar JSON manualmente.")
-                            results_to_update = None
-
-                        if results_to_update is not None:
-                            try:
-                                headers_with_researcher = dict(api_headers)
-                                headers_with_researcher.update({"researcher-id": str(st.session_state.user.get("id"))})
-
-                                # Decide status based on whether all fields are filled
-                                def _all_filled(results: dict) -> bool:
-                                    if not isinstance(results, dict):
-                                        return False
-                                    for v in results.values():
-                                        if v is None:
-                                            return False
-                                        if isinstance(v, str) and v.strip() == "":
-                                            return False
-                                    return True
-
-                                all_filled = _all_filled(results_to_update)
-
-                                # If not all filled, mark as 'Em Andamento' (running) before sending
-                                if not all_filled:
-                                    try:
-                                        with st.spinner(f"Marcando experimento {exp_id} como 'Em Andamento' (preparando resultados)..."):
-                                            resp_status = requests.post(f"{BACKEND_URL}/experimentos/{exp_id}/set-status", headers=headers_with_researcher, json={"status": "1"})
-                                            resp_status.raise_for_status()
-                                    except requests.exceptions.RequestException:
-                                        st.warning("Não foi possível marcar o experimento como 'Em Andamento'. Continuando com o envio dos resultados...")
-
-                                # Envia os resultados
-                                with st.spinner(f"Enviando resultados para o experimento {exp_id}..."):
-                                    resp = requests.patch(f"{BACKEND_URL}/experimentos/{exp_id}/update-results", headers=headers_with_researcher, json={"results": results_to_update})
-                                    resp.raise_for_status()
-
-                                # Se todos os campos estiverem preenchidos, marca como 'Concluído'
-                                if all_filled:
-                                    try:
-                                        with st.spinner(f"Marcando experimento {exp_id} como 'Concluído'..."):
-                                            resp_done = requests.post(f"{BACKEND_URL}/experimentos/{exp_id}/set-status", headers=headers_with_researcher, json={"status": "2"})
-                                            resp_done.raise_for_status()
-                                    except requests.exceptions.RequestException:
-                                        st.warning("Resultados enviados, mas não foi possível marcar o experimento como 'Concluído'.")
-
-                                st.success(f"Resultados do experimento {exp_id} atualizados com sucesso!")
-                            except requests.exceptions.RequestException as e:
-                                handle_api_error(e, "Atualizar Resultados (Máquina)")
-
-        # Fim do formulário de envio de resultados
-        # ==========================================
-
-# =========================
 # ABA 5: EDITAR EXPERIMENTO (MÁQUINA)
 # =========================
 with tab5:
@@ -724,13 +612,28 @@ with tab5:
                 if not results_payload:
                     st.error("Nenhum campo disponível para enviar.")
                 else:
+                    # frontend/app.py (ABA 5)
                     try:
+                        researcher_id = st.session_state.user.get("id")
                         headers_with_researcher = dict(api_headers)
-                        headers_with_researcher.update({"researcher-id": str(st.session_state.user.get("id"))})
+                        headers_with_researcher.update({"researcher-id": str(researcher_id)})
+
+                        # Etapa 1: Atualizar os resultados
                         with st.spinner(f"Enviando atualização para o experimento {exp_id}..."):
-                            resp = requests.patch(f"{BACKEND_URL}/experimentos/{exp_id}/update-results", headers=headers_with_researcher, json={"results": results_payload})
+                            resp = requests.patch(
+                                f"{BACKEND_URL}/experimentos/{exp_id}/update-results", 
+                                headers=headers_with_researcher, 
+                                json={"results": results_payload}
+                            )
                             resp.raise_for_status()
-                            st.success(f"Experimento {exp_id} atualizado com sucesso.")
+                        st.toast("Resultados atualizados!", icon="📝")
+
+                        # Etapa 2: Mudar o status para 2 (Concluído)
+                        with st.spinner(f"Marcando experimento {exp_id} como 'Concluído'..."):
+                            api_set_status(api_headers, exp_id, researcher_id, status_code=2)
+                        
+                        st.success(f"Experimento {exp_id} atualizado e marcado como 'Concluído' com sucesso!")
+
                     except requests.exceptions.RequestException as e:
                         handle_api_error(e, "Enviar Atualização do Experimento")
 # =========================

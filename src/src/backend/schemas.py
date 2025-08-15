@@ -21,7 +21,7 @@ class ExperimentResponse(BaseModel):
 
     class Config:
         # Permite que o Pydantic leia os dados de um objeto ORM (SQLAlchemy).
-        orm_mode = True
+        from_attributes = True
 
 class ResearcherResponse(BaseModel):
     """Schema para representar um pesquisador na resposta da API, incluindo seus experimentos."""
@@ -32,7 +32,7 @@ class ResearcherResponse(BaseModel):
     experiments: List[ExperimentResponse] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 # --- Schemas para Requisições ---
