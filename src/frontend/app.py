@@ -29,7 +29,7 @@ def gradient_bar(height: int = 6, width: int = 1200):
     st.image(bar, use_container_width=True, clamp=True)
 
 # Carrega variáveis de ambiente de um arquivo .env
-load_dotenv()
+load_dotenv('sla.env')
 
 # Busca as configurações da API do .env ou usa valores padrão.
 ELAB_URL = os.getenv("ELAB_URL", "")
@@ -117,6 +117,15 @@ def api_get_pdf(headers: Dict, exp_id: int, include_changelog: bool) -> bytes:
     response.raise_for_status()
     return response.content
 
+def api_update_results(headers: Dict, exp_id: int, results: Dict[str, str]) -> Dict:
+    response = requests.patch(
+        f"{BACKEND_URL}/experimentos/{exp_id}/update-results",
+        headers=headers,
+        json={"results": results}
+    )
+    response.raise_for_status()
+    return response.json()
+
 def api_initialize(headers: Dict) -> None:
     response = requests.post(f"{BACKEND_URL}/initialize", headers=headers)
     response.raise_for_status()
@@ -166,9 +175,10 @@ if not st.session_state.data_loaded:
             st.stop()
 
 # --- ABAS PARA ORGANIZAR O FLUXO ---
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "Nova Solicitação de Análise",
     "Acompanhamento e Laudos",
+    "Lançar resultados",
     "Administração"
 ])
 
@@ -326,10 +336,64 @@ with tab2:
             use_container_width=True,
         )
 
+
 # =========================
-# ABA 3: ADMINISTRAÇÃO
+# ABA 3: INSERIR RESULTADOS
 # =========================
 with tab3:
+    st.header("Inserir Resultados de Análise")
+    
+    with st.form("form_update_results"):
+        agendamentos_para_update = list(st.session_state.agendamentos.keys())
+        ag_key_update = st.selectbox(
+            "Selecione uma solicitação para atualizar:",
+            options=sorted(agendamentos_para_update),
+            index=None,
+            placeholder="Selecione um agendamento...",
+            key="update_ag_key"
+        )
+        
+        st.divider()
+        
+        submit_update = st.form_submit_button("Atualizar Resultados", type="primary", use_container_width=True)
+
+        if submit_update:
+            if not ag_key_update:
+                st.error("Por favor, selecione um agendamento.")
+            else:
+                exp_id = st.session_state.agendamentos.get(ag_key_update)
+                if not exp_id:
+                    st.error("ID do experimento não encontrado para este agendamento.")
+                else:
+                    try:
+                        # Valores predefinidos que serão enviados
+                        results_to_update = {
+                            "Ureia (BUN)": "17.5",
+                            "Creatinina": "0.6",
+                            "TGO (AST)": "150",
+                            "TGP (ALT)": "45",
+                            "TAP (PT)": "11.2",
+                            "TTPA (aPTT)": "18.9",
+                            "Hemácias": "14.2",
+                            "Hemoglobina": "9500",
+                            "Leucócitos": "9500",
+                            "Hematócrito": "41",
+                            "VCM": "70",
+                            "HCM": "20",
+                            "CHCM": "34",
+                            "Plaquetas": "1000",
+                        }
+                        
+                        with st.spinner(f"Atualizando resultados para o experimento {exp_id}..."):
+                            api_update_results(api_headers, exp_id, results_to_update)
+                            st.success(f"Resultados do experimento {exp_id} atualizados com sucesso!")
+                    except requests.exceptions.RequestException as e:
+                        handle_api_error(e, "Atualizar Resultados")
+
+# =========================
+# ABA 4: ADMINISTRAÇÃO
+# =========================
+with tab4:
     st.header("Administração do Ambiente")
     st.markdown("Visão geral da sessão e do estado da integração.")
     st.divider()

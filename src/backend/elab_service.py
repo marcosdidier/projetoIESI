@@ -298,3 +298,25 @@ def export_pdf(base: str, key: str, verify: bool, exp_id: int, *, include_change
         
     response_obj = _req(base, key, verify, "GET", f"experiments/{exp_id}", params=params)
     return response_obj.content
+
+def update_results(base: str, key: str, verify: bool, exp_id: int, results: Dict[str, str]):
+
+    experiment = GET(base, key, verify, f"experiments/{exp_id}")
+    current_body = experiment.get("body_html")
+
+    if not current_body:
+        raise ValueError("Não foi possível obter o corpo HTML do experimento.")
+
+    updated_body = current_body
+
+    for analyte, value in results.items():
+        pattern = re.compile(
+            rf'(<tr><td>{re.escape(analyte)}</td><td>)(.*?)(</td>)'
+        )
+    
+        updated_body = pattern.sub(
+            lambda match: match.group(1) + value + match.group(3),
+            updated_body
+        )
+    data = {"body": updated_body}
+    return PATCH(base, key, verify, f"experiments/{exp_id}", body=data)
