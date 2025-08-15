@@ -578,3 +578,7 @@ def get_experiment_body(experiment_id: int, creds: ElabCredentials = Depends(get
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
