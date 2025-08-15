@@ -260,24 +260,19 @@ with tab1:
 # ABA 4: USUÁRIOS (REGISTRO E LOGIN)
 # =========================
 with tab4:
-    st.header("Gerenciamento de Pesquisadores")
+    st.header("Gerenciamento de Usuários")
 
-    # --- Login de usuário: apenas pelo nome do pesquisador já cadastrado ---
+    # --- Login de usuário: apenas pelo nome do usuário já cadastrado ---
     if st.session_state.user:
         st.success(f"Usuário logado: {st.session_state.user.get('name', '')}")
         if st.button("Sair", use_container_width=True):
             st.session_state.user = None
             st.rerun()
     else:
-        st.subheader("Login de Pesquisador")
+        st.subheader("Login de Usuário")
         researchers_names = sorted(st.session_state.researchers_session.keys())
         with st.form("form_login_researcher"):
-            login_name = st.selectbox(
-                "Selecione seu nome (pesquisador já cadastrado)",
-                options=researchers_names,
-                index=None,
-                placeholder="Escolha seu nome..."
-            )
+            login_name = st.text_input("Nome do Usuário", placeholder="Digite seu nome de usuário")
             login_password = st.text_input("Senha", type="password", placeholder="Digite sua senha")
             if st.form_submit_button("Entrar", use_container_width=True):
                 if not login_name:
@@ -307,13 +302,13 @@ with tab4:
                         st.error(f"Erro ao autenticar: {e}")
 
     st.divider()
-    st.subheader("Cadastrar Novo Pesquisador na Plataforma")
+    st.subheader("Cadastrar Novo Usuário na Plataforma")
     with st.form("form_researcher"):
-        name = st.text_input("Nome completo do pesquisador", placeholder="Ex.: Profa. Maria Silva")
+        name = st.text_input("Nome completo do usuário", placeholder="Ex.: Profa. Maria Silva")
         password = st.text_input("Senha", type="password", placeholder="Digite uma senha")
         password2 = st.text_input("Confirme a Senha", type="password", placeholder="Repita a senha")
-        role_option = st.selectbox("Papel (role)", options=["pesquisador", "admin", "maquina"], index=0, help="Selecione o papel do usuário no sistema.")
-        if st.form_submit_button("Cadastrar Pesquisador", use_container_width=True):
+        role_option = st.selectbox("Papel", options=["pesquisador", "admin", "maquina"], index=0, help="Selecione o papel do usuário no sistema.")
+        if st.form_submit_button("Cadastrar Usuário", use_container_width=True):
             if not name.strip():
                 st.warning("O nome do pesquisador não pode ser vazio.")
             elif not password or not password2:
