@@ -6,6 +6,7 @@ import os
 from dotenv import load_dotenv
 from streamlit_autorefresh import st_autorefresh
 import numpy as np
+import json
 
 # ==============================================================================
 # APLICAÇÃO FRONTEND COM STREAMLIT
@@ -99,8 +100,8 @@ def api_get_experiments(headers: Dict) -> List[Dict]:
     response.raise_for_status()
     return response.json()
 
-def api_create_researcher(headers: Dict, name: str, password: str) -> Dict:
-    response = requests.post(f"{BACKEND_URL}/pesquisadores", headers=headers, json={"name": name, "password": password})
+def api_create_researcher(headers: Dict, name: str, password: str, role: str = "pesquisador") -> Dict:
+    response = requests.post(f"{BACKEND_URL}/pesquisadores", headers=headers, json={"name": name, "password": password, "role": role})
     response.raise_for_status()
     return response.json()
 
@@ -161,11 +162,12 @@ if not st.session_state.data_loaded:
             st.stop()
 
 # --- ABAS PARA ORGANIZAR O FLUXO ---
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     " Nova Solicitação de Análise ",
     " Acompanhamento e Laudos ",
     " Administração ",
-    " Usuários "
+    " Usuários ",
+    " Editar Experimento "
 ])
 
 
@@ -176,9 +178,13 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.header("Registrar Nova Solicitação de Análise")
 
+    # Access control: only users with role 'pesquisador' can create experiments
     if not st.session_state.user:
         st.warning("Você precisa estar logado para criar uma solicitação.")
         st.info("Acesse a aba 'Usuários' para fazer login.")
+    elif st.session_state.user.get('role') != 'pesquisador':
+        st.error("Acesso negado: apenas usuários com role 'pesquisador' podem criar solicitações.")
+        st.info("Se você for administrador, use a aba 'Administração' para operações de gestão.")
     else:
         st.subheader("Preencher Dados da Solicitação")
         with st.form("form_experiment"):
@@ -277,7 +283,8 @@ with tab4:
                             st.session_state.user = {
                                 "id": user_data.get("id"),
                                 "name": user_data.get("name"),
-                                "elab_item_id": user_data.get("elab_item_id")
+                                "elab_item_id": user_data.get("elab_item_id"),
+                                "role": user_data.get("role")
                             }
                             st.success(f"Bem-vindo, {login_name}!")
                             st.rerun()
@@ -292,6 +299,7 @@ with tab4:
         name = st.text_input("Nome completo do pesquisador", placeholder="Ex.: Profa. Maria Silva")
         password = st.text_input("Senha", type="password", placeholder="Digite uma senha")
         password2 = st.text_input("Confirme a Senha", type="password", placeholder="Repita a senha")
+        role_option = st.selectbox("Papel (role)", options=["pesquisador", "admin", "maquina"], index=0, help="Selecione o papel do usuário no sistema.")
         if st.form_submit_button("Cadastrar Pesquisador", use_container_width=True):
             if not name.strip():
                 st.warning("O nome do pesquisador não pode ser vazio.")
@@ -304,7 +312,7 @@ with tab4:
             else:
                 try:
                     with st.spinner(f"Cadastrando '{name.strip()}'..."):
-                        data = api_create_researcher(api_headers, name.strip(), password)
+                        data = api_create_researcher(api_headers, name.strip(), password, role_option)
                         # Garante que a chave 'experiments' exista
                         if 'experiments' not in data:
                             data['experiments'] = []
@@ -314,7 +322,8 @@ with tab4:
                         st.session_state.user = {
                             "id": data.get("id"),
                             "name": data.get("name"),
-                            "elab_item_id": data.get("elab_item_id")
+                            "elab_item_id": data.get("elab_item_id"),
+                            "role": data.get("role")
                         }
                         st.success(f"Logado como {data.get('name')}")
                         st.rerun()
@@ -327,9 +336,12 @@ with tab4:
 with tab2:
     st.header("Acompanhamento e Laudo da Análise")
 
+    # Access control: only 'pesquisador' role can view personal acompanhamento
     if not st.session_state.user:
         st.warning("Você precisa estar logado para acessar o acompanhamento e laudos.")
         st.info("Acesse a aba 'Usuários' para fazer login.")
+    elif st.session_state.user.get('role') != 'pesquisador':
+        st.error("Acesso negado: a aba de Acompanhamento é apenas para usuários com role 'pesquisador'.")
     else:
         # Mostra somente as solicitações do usuário logado
         user_name = st.session_state.user.get("name")
@@ -397,88 +409,330 @@ with tab2:
 # =========================
 with tab3:
     st.header("Administração do Ambiente")
-    st.markdown("Visão geral da sessão e do estado da integração.")
-    st.divider()
-
-    # --- NOVO BLOCO: STATUS DA INTEGRAÇÃO (COMO EM APP_NEW.PY) ---
-    st.subheader("Status da Integração")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.caption("Backend")
-        # Usamos o flag 'data_loaded' para saber se a comunicação inicial funcionou
-        if st.session_state.get("data_loaded"):
-            st.write("✅ Disponível")
-        else:
-            st.write("❌ Indisponível")
-
-    with col2:
-        st.caption("eLabFTW")
-        # Se os dados foram carregados, a conexão com o eLabFTW foi bem-sucedida
-        if st.session_state.get("data_loaded"):
-            st.write("✅ Conectado")
-        else:
-            st.write("❌ Não Conectado")
-
-    with col3:
-        st.caption("Credenciais (.env)")
-        # Verifica se as variáveis de ambiente foram carregadas
-        if bool(ELAB_URL and API_KEY):
-            st.write("✅ Presentes")
-        else:
-            st.write("❌ Ausentes")
-
-    st.divider()
-    # --- FIM DO NOVO BLOCO ---
-
-
-    st.subheader("Verificação Manual de Estruturas no eLabFTW")
-    st.markdown("Esta ação verifica se o **Tipo de Item 'Pesquisador'** existe no seu eLabFTW. Se não existir, ele será criado.")
-    if st.button("Verificar Estruturas", use_container_width=True):
-        try:
-            with st.spinner("Verificando..."):
-                api_initialize(api_headers)
-        except requests.exceptions.RequestException as e:
-            handle_api_error(e, "Inicializar Ambiente")
-
-    st.divider()
-
-    st.subheader("Dados da Sessão Atual (Carregados do Banco)")
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Pesquisadores**")
-        st.json(st.session_state.researchers_session, expanded=False)
-    with col2:
-        st.markdown("**Solicitações (Agendamento -> ID eLab)**")
-        st.json(st.session_state.agendamentos, expanded=False)
-
-    st.divider()
-    
-    st.header("🔗 Visualizar Experimentos por Pesquisador")
-    researcher_names = list(st.session_state.researchers_session.keys())
-    
-    if not researcher_names:
-        st.info("Nenhum pesquisador carregado. Verifique a conexão e o banco de dados.")
+    # Admin-only area
+    if not st.session_state.user:
+        st.warning("Você precisa estar logado como administrador para acessar esta área.")
+        st.info("Acesse a aba 'Usuários' para fazer login.")
+    elif st.session_state.user.get('role') != 'admin':
+        st.error("Acesso negado: apenas administradores podem acessar esta área.")
     else:
-        selected_name = st.selectbox(
-            "Selecione um pesquisador para ver suas solicitações",
-            options=sorted(researcher_names),
-            index=None,
-            placeholder="Escolha um pesquisador..."
-        )
+        st.markdown("Visão geral da sessão e do estado da integração.")
+        st.divider()
 
-        if selected_name:
-            researcher_data = st.session_state.researchers_session[selected_name]
-            experiments_list = researcher_data.get('experiments', [])
-            
-            st.subheader(f"Solicitações de: {selected_name}")
+        # --- NOVO BLOCO: STATUS DA INTEGRAÇÃO (COMO EM APP_NEW.PY) ---
+        st.subheader("Status da Integração")
+        col1, col2, col3 = st.columns(3)
 
-            if not experiments_list:
-                st.write("Nenhuma solicitação encontrada para este pesquisador.")
+        with col1:
+            st.caption("Backend")
+            # Usamos o flag 'data_loaded' para saber se a comunicação inicial funcionou
+            if st.session_state.get("data_loaded"):
+                st.write("✅ Disponível")
             else:
-                for exp in experiments_list:
-                    st.info(f"**ID da Referência (Agendamento):** `{exp['id']}`\n\n**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
+                st.write("❌ Indisponível")
 
+        with col2:
+            st.caption("eLabFTW")
+            # Se os dados foram carregados, a conexão com o eLabFTW foi bem-sucedida
+            if st.session_state.get("data_loaded"):
+                st.write("✅ Conectado")
+            else:
+                st.write("❌ Não Conectado")
+
+        with col3:
+            st.caption("Credenciais (.env)")
+            # Verifica se as variáveis de ambiente foram carregadas
+            if bool(ELAB_URL and API_KEY):
+                st.write("✅ Presentes")
+            else:
+                st.write("❌ Ausentes")
+
+        st.divider()
+        # --- FIM DO NOVO BLOCO ---
+
+
+        st.subheader("Verificação Manual de Estruturas no eLabFTW")
+        st.markdown("Esta ação verifica se o **Tipo de Item 'Pesquisador'** existe no seu eLabFTW. Se não existir, ele será criado.")
+        if st.button("Verificar Estruturas", use_container_width=True):
+            try:
+                with st.spinner("Verificando..."):
+                    api_initialize(api_headers)
+            except requests.exceptions.RequestException as e:
+                handle_api_error(e, "Inicializar Ambiente")
+
+        st.divider()
+
+        st.subheader("Dados da Sessão Atual (Carregados do Banco)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("**Pesquisadores**")
+            st.json(st.session_state.researchers_session, expanded=False)
+        with col2:
+            st.markdown("**Solicitações (Agendamento -> ID eLab)**")
+            st.json(st.session_state.agendamentos, expanded=False)
+
+        st.divider()
+        
+        st.header("🔗 Visualizar Experimentos por Pesquisador")
+        researcher_names = list(st.session_state.researchers_session.keys())
+        
+        if not researcher_names:
+            st.info("Nenhum pesquisador carregado. Verifique a conexão e o banco de dados.")
+        else:
+            selected_name = st.selectbox(
+                "Selecione um pesquisador para ver suas solicitações",
+                options=sorted(researcher_names),
+                index=None,
+                placeholder="Escolha um pesquisador..."
+            )
+
+            if selected_name:
+                researcher_data = st.session_state.researchers_session[selected_name]
+                experiments_list = researcher_data.get('experiments', [])
+                
+                st.subheader(f"Solicitações de: {selected_name}")
+
+                if not experiments_list:
+                    st.write("Nenhuma solicitação encontrada para este pesquisador.")
+                else:
+                    for exp in experiments_list:
+                        st.info(f"**ID da Referência (Agendamento):** `{exp['id']}`\n\n**ID do Experimento no eLab:** `{exp['elab_experiment_id']}`")
+
+# =========================
+# ABA 3: LANÇAR RESULTADOS (MÁQUINAS) - atualizado para usar templates dinâmicos
+# =========================
+with tab4:
+    st.header("Inserir Resultados de Análise (Máquina)")
+
+    # Access control: only 'maquina' role can use this tab
+    if not st.session_state.user:
+        st.warning("Você precisa estar logado como máquina para executar esta ação.")
+        st.info("Acesse a aba 'Usuários' para fazer login com uma conta de máquina.")
+    elif st.session_state.user.get('role') != 'maquina':
+        st.error("Acesso negado: apenas contas com role 'maquina' podem enviar resultados automaticamente.")
+    else:
+        with st.form("form_update_results"):
+            # Seleção do template (por enquanto apenas 'Sangue' disponível)
+            tipo_options = ["Sangue"]
+            tipo_choice = st.selectbox("Template (Tipo de Amostra)", options=tipo_options, index=0, help="Selecione o template a ser usado para preencher os campos.")
+
+            # Seleciona a solicitação (agendamento) a ser atualizada
+            agendamentos_para_update = list(st.session_state.agendamentos.keys())
+            ag_key_update = st.selectbox(
+                "Selecione uma solicitação para atualizar:",
+                options=sorted(agendamentos_para_update),
+                index=None,
+                placeholder="Selecione um agendamento...",
+                key="update_ag_key_machine"
+            )
+
+            st.divider()
+
+            # Tenta carregar o template e extrair os placeholders (campos) do backend
+            placeholders = []
+            template_title = None
+            try:
+                # Solicita o template apropriado ao backend que por sua vez consulta o eLab
+                resp = requests.get(f"{BACKEND_URL}/templates", headers=api_headers, params={"tipo_amostra": tipo_choice})
+                resp.raise_for_status()
+                tpl = resp.json()
+                placeholders = tpl.get("placeholders", []) or []
+                template_title = tpl.get("title")
+            except requests.exceptions.RequestException as e:
+                # Mostra erro amigável e continua com lista vazia de campos
+                handle_api_error(e, "Carregar Template")
+                placeholders = []
+
+            if template_title:
+                st.caption(f"Template carregado: {template_title} — campos: {', '.join(placeholders) if placeholders else 'nenhum'}")
+
+            # Renderiza dinamicamente os campos do template
+            field_values = {}
+            if not placeholders:
+                st.info("Nenhum campo detectado no template. Você pode enviar um JSON na aba 'Editar Experimento' se desejar.")
+            else:
+                st.markdown("Preencha os campos abaixo com os valores que serão enviados ao eLab:")
+                for ph in placeholders:
+                    # Usa o próprio placeholder como label. Chave única para Streamlit.
+                    key = f"machine_field_{tipo_choice}_{ph}"
+                    field_values[ph] = st.text_input(ph, value="", key=key)
+
+            submit_update = st.form_submit_button("Enviar Resultados (Máquina)", type="primary", use_container_width=True)
+
+            if submit_update:
+                if not ag_key_update:
+                    st.error("Por favor, selecione um agendamento.")
+                else:
+                    exp_id = st.session_state.agendamentos.get(ag_key_update)
+                    if not exp_id:
+                        st.error("ID do experimento não encontrado para este agendamento.")
+                    else:
+                        # Monta o dicionário results a partir dos campos do template
+                        if placeholders:
+                            results_to_update = {k: (v if v is not None else "") for k, v in field_values.items()}
+                        else:
+                            # Sem placeholders detectados, envia um payload vazio para indicar erro no template
+                            st.error("Template não contém campos válidos para atualizar. Use a aba 'Editar Experimento' para enviar JSON manualmente.")
+                            results_to_update = None
+
+                        if results_to_update is not None:
+                            try:
+                                headers_with_researcher = dict(api_headers)
+                                headers_with_researcher.update({"researcher-id": str(st.session_state.user.get("id"))})
+
+                                # Decide status based on whether all fields are filled
+                                def _all_filled(results: dict) -> bool:
+                                    if not isinstance(results, dict):
+                                        return False
+                                    for v in results.values():
+                                        if v is None:
+                                            return False
+                                        if isinstance(v, str) and v.strip() == "":
+                                            return False
+                                    return True
+
+                                all_filled = _all_filled(results_to_update)
+
+                                # If not all filled, mark as 'Em Andamento' (running) before sending
+                                if not all_filled:
+                                    try:
+                                        with st.spinner(f"Marcando experimento {exp_id} como 'Em Andamento' (preparando resultados)..."):
+                                            resp_status = requests.post(f"{BACKEND_URL}/experimentos/{exp_id}/set-status", headers=headers_with_researcher, json={"status": "1"})
+                                            resp_status.raise_for_status()
+                                    except requests.exceptions.RequestException:
+                                        st.warning("Não foi possível marcar o experimento como 'Em Andamento'. Continuando com o envio dos resultados...")
+
+                                # Envia os resultados
+                                with st.spinner(f"Enviando resultados para o experimento {exp_id}..."):
+                                    resp = requests.patch(f"{BACKEND_URL}/experimentos/{exp_id}/update-results", headers=headers_with_researcher, json={"results": results_to_update})
+                                    resp.raise_for_status()
+
+                                # Se todos os campos estiverem preenchidos, marca como 'Concluído'
+                                if all_filled:
+                                    try:
+                                        with st.spinner(f"Marcando experimento {exp_id} como 'Concluído'..."):
+                                            resp_done = requests.post(f"{BACKEND_URL}/experimentos/{exp_id}/set-status", headers=headers_with_researcher, json={"status": "2"})
+                                            resp_done.raise_for_status()
+                                    except requests.exceptions.RequestException:
+                                        st.warning("Resultados enviados, mas não foi possível marcar o experimento como 'Concluído'.")
+
+                                st.success(f"Resultados do experimento {exp_id} atualizados com sucesso!")
+                            except requests.exceptions.RequestException as e:
+                                handle_api_error(e, "Atualizar Resultados (Máquina)")
+
+        # Fim do formulário de envio de resultados
+        # ==========================================
+
+# =========================
+# ABA 5: EDITAR EXPERIMENTO (MÁQUINA)
+# =========================
+with tab5:
+    st.header("Editar Informações do Experimento (Máquina)")
+
+    # Only machines can use this tab
+    if not st.session_state.user:
+        st.warning("Você precisa estar logado como máquina para editar experimentos.")
+        st.info("Acesse a aba 'Usuários' para fazer login com uma conta de máquina.")
+    elif st.session_state.user.get('role') != 'maquina':
+        st.error("Acesso negado: apenas contas com role 'maquina' podem editar experimentos.")
+    else:
+        with st.form("form_edit_experiment"):
+            exp_id_input = st.text_input("ID do Experimento (eLab)", placeholder="ex: 12345")
+            if st.form_submit_button("Carregar Campos do Experimento", type="secondary"):
+                st.session_state._edit_exp_loaded = False
+                if not exp_id_input.strip():
+                    st.error("ID do experimento é obrigatório para carregar campos.")
+                else:
+                    try:
+                        exp_id = int(exp_id_input.strip())
+                    except ValueError:
+                        st.error("ID do experimento deve ser um número inteiro.")
+                        exp_id = None
+
+                    if exp_id:
+                        try:
+                            headers_with_researcher = dict(api_headers)
+                            headers_with_researcher.update({"researcher-id": str(st.session_state.user.get("id"))})
+                            resp = requests.get(f"{BACKEND_URL}/experimentos/{exp_id}/body", headers=headers_with_researcher)
+                            resp.raise_for_status()
+                            data = resp.json()
+                            # Backend now returns a structured 'fields' list when possible
+                            fields = data.get("fields") or []
+                            body_text = data.get("body", "")
+
+                            if fields:
+                                # store fields list (preserves order and metadata)
+                                st.session_state._edit_fields_list = fields
+                                st.session_state._edit_exp_loaded = True
+                                st.session_state._edit_exp_id = exp_id
+                                st.success(f"Corpo do experimento {exp_id} carregado. {len(fields)} campos detectados.")
+                            else:
+                                # fallback: keep raw body for manual editing
+                                st.session_state._edit_fields_list = []
+                                st.session_state._edit_exp_loaded = True
+                                st.session_state._edit_exp_id = exp_id
+                                st.session_state._edit_body_raw = body_text
+                                st.success(f"Corpo do experimento {exp_id} carregado. Nenhum campo estruturado detectado.")
+                        except requests.exceptions.RequestException as e:
+                            handle_api_error(e, "Carregar Corpo do Experimento")
+
+        # Se campos foram carregados, renderiza inputs separados por campo
+        if st.session_state.get("_edit_exp_loaded"):
+            exp_id = st.session_state.get("_edit_exp_id")
+            fields_list = st.session_state.get("_edit_fields_list", []) or []
+
+            st.markdown("### Campos detectados no corpo do experimento")
+            updated_values = {}
+
+            if fields_list:
+                for f in fields_list:
+                    label = f.get("label") or f.get("key")
+                    value = f.get("value", "")
+                    unit = f.get("unit", "")
+                    reference = f.get("reference", "")
+                    key = f"edit_field_{exp_id}_{f.get('key', label)}"
+
+                    col1, col2 = st.columns([2,1])
+                    with col1:
+                        updated_values[label] = st.text_input(f"{label}", value=value, key=key)
+                    with col2:
+                        # show unit and reference compactly
+                        st.caption(f"{unit or ''}\n{reference or ''}")
+
+            else:
+                # No structured fields: show raw body for manual edit
+                raw = st.session_state.get("_edit_body_raw", "")
+                updated_raw = st.text_area("Corpo bruto do experimento", value=raw, height=300, key=f"edit_body_raw_{exp_id}")
+                # If user edited raw, we won't parse fields; submit will send raw lines
+                # Map lines like 'Key: value' into results dict on submit
+
+            if st.button("Enviar Atualização do Experimento", type="primary"):
+                # Build results payload
+                results_payload = None
+                if fields_list:
+                    results_payload = {k: v for k, v in updated_values.items()}
+                else:
+                    # parse updated_raw into dict
+                    updated_raw = st.session_state.get(f"edit_body_raw_{exp_id}", "")
+                    parsed = {}
+                    for line in (updated_raw or "").splitlines():
+                        if ':' in line:
+                            k, v = line.split(':', 1)
+                            parsed[k.strip()] = v.strip()
+                    results_payload = parsed
+
+                if not results_payload:
+                    st.error("Nenhum campo disponível para enviar.")
+                else:
+                    try:
+                        headers_with_researcher = dict(api_headers)
+                        headers_with_researcher.update({"researcher-id": str(st.session_state.user.get("id"))})
+                        with st.spinner(f"Enviando atualização para o experimento {exp_id}..."):
+                            resp = requests.patch(f"{BACKEND_URL}/experimentos/{exp_id}/update-results", headers=headers_with_researcher, json={"results": results_payload})
+                            resp.raise_for_status()
+                            st.success(f"Experimento {exp_id} atualizado com sucesso.")
+                    except requests.exceptions.RequestException as e:
+                        handle_api_error(e, "Enviar Atualização do Experimento")
 # =========================
 # Rodapé
 # =========================

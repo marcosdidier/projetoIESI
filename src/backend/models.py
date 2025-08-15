@@ -7,7 +7,7 @@ que armazena informações sobre pesquisadores e experimentos para evitar
 consultas desnecessárias à API do eLabFTW e para manter um registro local.
 """
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, CheckConstraint
 from datetime import datetime
 
 # Base declarativa que será usada por todos os modelos ORM.
@@ -24,12 +24,22 @@ class Researcher(Base):
 
     # ID primário no nosso banco de dados local.
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False, unique=True, comment="Nome completo e único do pesquisador.")
+    name = Column(String, nullable=False, unique=True, comment="Nome de usuário do pesquisador (único).")
     password = Column(String, nullable=False, comment="Hash da senha para futura implementação de login.")
     
     # ID correspondente ao "item" do tipo "Pesquisador" no eLabFTW.
     # Essencial para vincular o registro local ao registro no eLab.
     elab_item_id = Column(Integer, nullable=True, unique=True)
+
+    # Papel/role do pesquisador no sistema. Valores permitidos: 'pesquisador', 'admin', 'maquina'.
+    # Define um valor padrão 'pesquisador' tanto em nível Python quanto no banco (server_default).
+    role = Column(String, nullable=False, default="pesquisador", server_default="pesquisador",
+                  comment="Role: 'pesquisador', 'admin' or 'maquina'")
+
+    # Garantia em nível de esquema: apenas os valores permitidos são aceitos.
+    __table_args__ = (
+        CheckConstraint("role IN ('pesquisador','admin','maquina')", name="ck_researcher_role"),
+    )
     
     created_at = Column(DateTime, default=datetime.now)
 

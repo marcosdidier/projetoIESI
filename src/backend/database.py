@@ -160,22 +160,32 @@ def get_all_experiments(db: Session) -> List[Experiment]:
         print(f"❌ Erro ao buscar todos os experimentos: {e}")
         return []
 
-def register_researcher(db: Session, name: str, password: str, elab_item_id: Optional[int] = None) -> Optional[Researcher]:
+def register_researcher(db: Session, name: str, password: str, elab_item_id: Optional[int] = None, role: Optional[str] = None) -> Optional[Researcher]:
     """
     Registra um novo pesquisador ou atualiza um existente.
 
-    Se um pesquisador com o mesmo nome já existe, atualiza seu `elab_item_id` se
-    necessário e retorna o objeto completo. Caso contrário, cria um novo registro.
+    Se um pesquisador com o mesmo nome já existe, atualiza seu `elab_item_id`,
+    `password` e `role` se fornecidos. Caso contrário, cria um novo registro.
 
     Returns:
         O objeto Researcher criado ou encontrado, com seus experimentos carregados.
     """
     try:
+        # Normaliza e valida o role se fornecido.
+        allowed_roles = {"pesquisador", "admin", "maquina"}
+        if role:
+            role = role.strip().lower()
+            if role not in allowed_roles:
+                print(f"⚠️ Role inválido '{role}' fornecido. Usando 'pesquisador' por padrão.")
+                role = "pesquisador"
+        else:
+            role = "pesquisador"
+
         existing_researcher = db.query(Researcher).filter(Researcher.name == name).first()
         
         if existing_researcher:
             # Se o pesquisador já existe, atualiza o ID do eLab se estiver faltando
-            # e atualiza a senha se uma nova for fornecida (ou se estiver vazia localmente).
+            # e atualiza a senha/role se uma nova for fornecida (ou se estiver vazia localmente).
             updated = False
             if elab_item_id and not existing_researcher.elab_item_id:
                 existing_researcher.elab_item_id = elab_item_id
@@ -185,22 +195,25 @@ def register_researcher(db: Session, name: str, password: str, elab_item_id: Opt
                 existing_researcher.password = password
                 updated = True
 
+            if role and existing_researcher.role != role:
+                existing_researcher.role = role
+                updated = True
+
             if updated:
                 db.commit()
 
             # Recarrega o pesquisador forçando o carregamento dos experimentos.
-            # Isso garante que a resposta da API seja sempre completa e consistente.
             complete_researcher = db.query(Researcher).options(
                 joinedload(Researcher.experiments)
             ).filter(Researcher.id == existing_researcher.id).first()
             return complete_researcher
 
         # Se não existe, cria um novo pesquisador.
-        new_researcher = Researcher(name=name, password=password, elab_item_id=elab_item_id)
+        new_researcher = Researcher(name=name, password=password, elab_item_id=elab_item_id, role=role)
         db.add(new_researcher)
         db.commit()
         db.refresh(new_researcher) # Atualiza o objeto com os dados do banco (como o ID gerado).
-        print(f"✅ Pesquisador '{name}' criado com ID local {new_researcher.id}")
+        print(f"✅ Pesquisador '{name}' criado com ID local {new_researcher.id} e role '{new_researcher.role}'")
         return new_researcher
         
     except Exception as e:

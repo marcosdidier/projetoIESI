@@ -28,6 +28,7 @@ class ResearcherResponse(BaseModel):
     id: int
     name: str
     elab_item_id: Optional[int] = None
+    role: str
     experiments: List[ExperimentResponse] = []
 
     class Config:
@@ -40,6 +41,7 @@ class ResearcherRequest(BaseModel):
     """Schema para o corpo da requisição ao cadastrar um novo pesquisador."""
     name: str
     password: str
+    role: Optional[str] = "pesquisador"
 
 class ExperimentRequest(BaseModel):
     """Schema para o corpo da requisição ao criar um novo experimento."""
