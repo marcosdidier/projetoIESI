@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from typing import List
 from datetime import datetime
+from pydantic import BaseModel
 
 # Importações locais da aplicação
 from src.backend.database import (
@@ -24,6 +25,9 @@ from src.backend.schemas import (
     ResearcherResponse, ExperimentResponse
 )
 import src.backend.elab_service as elab_service
+
+class ResultsUpdateRequest(BaseModel):
+    results: Dict[str, str]
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -203,9 +207,9 @@ def health_check():
 @app.patch("/experimentos/{experiment_id}/update-results")
 def update_experiment_results(
     experiment_id: int,
-    request: ExperimentRequest,
-    elab_url: str = Header(...),
-    elab_api_key: str = Header(...)
+    request: ResultsUpdateRequest,
+    elab_url: str = Header(..., alias="elab-url"),
+    elab_api_key: str = Header(..., alias="elab-api-key")
 ):
     try:
         response = elab_service.update_results(
