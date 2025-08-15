@@ -33,14 +33,7 @@ DB_NAME = os.getenv("DB_NAME", "iesi_projeto").strip()
 DB_SSLMODE = os.getenv("DB_SSLMODE", "disable" if DB_HOST in ("localhost", "127.0.0.1") else "require")
 
 # Monta a URL de conexão para o SQLAlchemy.
-DATABASE_URL = URL.create(
-    drivername="postgresql+psycopg2",
-    username=DB_USER,
-    password=DB_PASSWORD,
-    host=DB_HOST,
-    port=int(DB_PORT) if DB_PORT else None,
-    database=DB_NAME,
-)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Cria a "engine" do SQLAlchemy, o ponto central de comunicação com o banco.
 # Configurações de pool otimizam o reuso de conexões.
