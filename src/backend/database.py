@@ -174,11 +174,20 @@ def register_researcher(db: Session, name: str, password: str, elab_item_id: Opt
         existing_researcher = db.query(Researcher).filter(Researcher.name == name).first()
         
         if existing_researcher:
-            # Se o pesquisador já existe, apenas atualiza o ID do eLab se estiver faltando.
+            # Se o pesquisador já existe, atualiza o ID do eLab se estiver faltando
+            # e atualiza a senha se uma nova for fornecida (ou se estiver vazia localmente).
+            updated = False
             if elab_item_id and not existing_researcher.elab_item_id:
                 existing_researcher.elab_item_id = elab_item_id
+                updated = True
+
+            if password and existing_researcher.password != password:
+                existing_researcher.password = password
+                updated = True
+
+            if updated:
                 db.commit()
-            
+
             # Recarrega o pesquisador forçando o carregamento dos experimentos.
             # Isso garante que a resposta da API seja sempre completa e consistente.
             complete_researcher = db.query(Researcher).options(

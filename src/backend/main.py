@@ -7,7 +7,7 @@ externo eLabFTW, além de interagir com um banco de dados local para
 armazenamento de metadados.
 """
 
-from fastapi import FastAPI, Depends, HTTPException, Header
+from fastapi import FastAPI, Depends, HTTPException, Header, Body
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
 from typing import List
@@ -110,20 +110,32 @@ def create_researcher(
     """
     Cadastra um pesquisador. O processo envolve duas etapas:
     1. Cria um "item" correspondente no eLabFTW para obter um ID.
-    2. Salva o pesquisador no banco de dados local com a referência ao ID do eLab.
+    2. Salva o pesquisador no banco de dados local com a referência ao ID do eLab
     """
     try:
-        # Etapa 1: Cria o item no eLab.
+        # DEBUG: log do payload recebido
+        print(f"[DEBUG] create_researcher payload: name='{request.name}' password_present={bool(getattr(request, 'password', None))}")
+
+        # Validações
+        if not getattr(request, "password", None) or not request.password.strip():
+            raise HTTPException(status_code=400, detail="Senha obrigatória para cadastro do pesquisador.")
+
+        # Etapa 1: Cria o item no eLab (pode falhar com exceção que será convertida em HTTPException)
         elab_item_id = elab_service.register_researcher_item(creds.url, creds.api_key, True, request.name)
-        
+        if not elab_item_id:
+            raise HTTPException(status_code=500, detail="Falha ao criar item de pesquisador no eLabFTW.")
+
         # Etapa 2: Salva no banco de dados local, associando o ID do eLab.
-        # A senha "default_password" é um placeholder para uma futura implementação de autenticação.
-        local_researcher = register_researcher(db, name=request.name, password="default_password", elab_item_id=elab_item_id)
+        local_researcher = register_researcher(db, name=request.name, password=request.password, elab_item_id=elab_item_id)
         if not local_researcher:
             raise HTTPException(status_code=500, detail="Não foi possível salvar o pesquisador no banco de dados local.")
 
         return local_researcher
+    except HTTPException:
+        # Re-levanta HTTPException sem alteração
+        raise
     except Exception as e:
+        print(f"[ERROR] create_researcher exception: {e}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/experimentos", status_code=201, summary="Cria um Novo Experimento")
@@ -194,4 +206,39 @@ def get_experiment_pdf(experiment_id: int, include_changelog: bool = False, cred
         # Retorna a resposta com os bytes do PDF e o `media_type` correto.
         return Response(content=pdf_bytes, media_type="application/pdf")
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/login", summary="Autentica um pesquisador pelo nome e senha")
+def login_researcher(
+    db: Session = Depends(get_db),
+    payload: dict = Body(...)
+):
+    """
+    Autentica um pesquisador pelo nome e senha.
+    Retorna os dados do pesquisador se autenticado, ou erro 401.
+    """
+    try:
+        # DEBUG: print payload
+        print(f"[DEBUG] /login payload: {payload}")
+        name = payload.get("name")
+        password = payload.get("password")
+        if not name or not password:
+            raise HTTPException(status_code=400, detail="Nome e senha são obrigatórios.")
+        researcher = db.query(Researcher).filter(Researcher.name == name).first()
+        if not researcher:
+            raise HTTPException(status_code=401, detail="Nome ou senha inválidos.")
+        # Comparação direta (temporária) — recomendamos hashing
+        if researcher.password != password:
+            raise HTTPException(status_code=401, detail="Nome ou senha inválidos.")
+        # Retorna apenas dados não sensíveis
+        return {
+            "id": researcher.id,
+            "name": researcher.name,
+            "elab_item_id": researcher.elab_item_id,
+            "created_at": researcher.created_at
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] /login exception: {e}")
         raise HTTPException(status_code=400, detail=str(e))

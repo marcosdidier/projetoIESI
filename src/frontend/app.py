@@ -64,6 +64,10 @@ if "last_consulted_id" not in st.session_state:
 if "data_loaded" not in st.session_state:
     st.session_state.data_loaded = False
 
+# Usuário logado (contexto de usuário)
+if "user" not in st.session_state:
+    st.session_state.user: Optional[Dict[str, Any]] = None
+
 
 # =========================
 # Funções de Comunicação com o Backend
@@ -95,8 +99,8 @@ def api_get_experiments(headers: Dict) -> List[Dict]:
     response.raise_for_status()
     return response.json()
 
-def api_create_researcher(headers: Dict, name: str) -> Dict:
-    response = requests.post(f"{BACKEND_URL}/pesquisadores", headers=headers, json={"name": name})
+def api_create_researcher(headers: Dict, name: str, password: str) -> Dict:
+    response = requests.post(f"{BACKEND_URL}/pesquisadores", headers=headers, json={"name": name, "password": password})
     response.raise_for_status()
     return response.json()
 
@@ -153,11 +157,14 @@ if not st.session_state.data_loaded:
             st.stop()
 
 # --- ABAS PARA ORGANIZAR O FLUXO ---
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     " Nova Solicitação de Análise ",
     " Acompanhamento e Laudos ",
-    " Administração "
+    " Administração ",
+    " Usuários "
 ])
+
+
 
 # =========================
 # ABA 1: NOVA SOLICITAÇÃO
@@ -165,87 +172,147 @@ tab1, tab2, tab3 = st.tabs([
 with tab1:
     st.header("Registrar Nova Solicitação de Análise")
 
-    with st.expander("Cadastrar Novo Pesquisador (se necessário)"):
-        with st.form("form_researcher"):
-            name = st.text_input("Nome completo do pesquisador", placeholder="Ex.: Profa. Maria Silva")
-            if st.form_submit_button("Cadastrar Pesquisador", use_container_width=True):
-                if not name.strip():
-                    st.warning("O nome do pesquisador não pode ser vazio.")
+    if not st.session_state.user:
+        st.warning("Você precisa estar logado para criar uma solicitação.")
+        st.info("Acesse a aba 'Usuários' para fazer login.")
+    else:
+        st.subheader("Preencher Dados da Solicitação")
+        with st.form("form_experiment"):
+            c1, c2 = st.columns(2)
+            with c1:
+                agendamento_id = st.text_input("ID de Referência (Agendamento)", help="Código único para referência externa. Ex: 'PROJ-X-001'", placeholder="PROJ-X-001")
+            with c2:
+                tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue Total", help="Ex.: Sangue Total, Soro, Plasma, etc.")
+
+            if st.form_submit_button("Criar Solicitação no eLabFTW", type="primary", use_container_width=True):
+                user_name = st.session_state.user.get("name")
+                researcher_info = st.session_state.researchers_session.get(user_name)
+                if not researcher_info:
+                    st.error("Usuário logado não encontrado entre os pesquisadores cadastrados.")
+                elif not agendamento_id.strip():
+                    st.error("O ID de Referência (Agendamento) é obrigatório.")
+                elif agendamento_id.strip() in st.session_state.agendamentos:
+                    st.error("Este ID de Referência já foi usado. Crie um novo.")
                 else:
                     try:
-                        with st.spinner(f"Cadastrando '{name.strip()}'..."):
-                            data = api_create_researcher(api_headers, name.strip())
-                            
-                            # --- INÍCIO DA CORREÇÃO PARA O KEYERROR ---
-                            # Garante que a chave 'experiments' exista no dicionário do pesquisador,
-                            # mesmo que ele seja novo e a API não retorne a lista vazia.
-                            if 'experiments' not in data:
-                                data['experiments'] = []
-                            # --- FIM DA CORREÇÃO ---
-                            
-                            st.session_state.researchers_session[data["name"]] = data
-                            st.success(f"Pesquisador '{data['name']}' cadastrado! (ID Local: {data['id']}, ID eLab: {data['elab_item_id']})")
-                    
+                        local_id = researcher_info["id"]
+                        elab_item_id = researcher_info.get("elab_item_id")
+
+                        with st.spinner("Criando solicitação no eLabFTW..."):
+                            json_body = {
+                                "agendamento_id": agendamento_id.strip(),
+                                "researcher_id": local_id,
+                                "item_pesquisador_id": elab_item_id or 0,
+                                "display_name": user_name.strip(),
+                                "tipo_amostra": tipo_amostra.strip() or "Não informado",
+                                "user": {
+                                    "id": st.session_state.user.get("id"),
+                                    "name": st.session_state.user.get("name"),
+                                    "email": st.session_state.user.get("email")
+                                }
+                            }
+                            data = api_create_experiment(api_headers, json_body)
+
+                            # 1. Atualiza a lista geral de agendamentos (como já fazia antes)
+                            st.session_state.agendamentos[agendamento_id.strip()] = data["experiment_id"]
+
+                            # 2. Prepara os dados do novo experimento no formato que o frontend espera
+                            new_experiment_data = {
+                                "id": agendamento_id.strip(),
+                                "elab_experiment_id": data["experiment_id"]
+                            }
+
+                            # 3. Adiciona o novo experimento à lista de experimentos do pesquisador na sessão
+                            st.session_state.researchers_session[user_name]['experiments'].append(new_experiment_data)
+
+                            st.success(f"Solicitação criada! ID do Experimento: {data['experiment_id']} | Status: {data['status']}")
+                            st.info("Acompanhe o status na aba 'Acompanhamento e Laudos'.")
                     except requests.exceptions.RequestException as e:
-                        handle_api_error(e, "Cadastrar Pesquisador")
+                        handle_api_error(e, "Criar Solicitação")
+
+# =========================
+# ABA 4: USUÁRIOS (REGISTRO E LOGIN)
+# =========================
+with tab4:
+    st.header("Gerenciamento de Pesquisadores")
+
+    # --- Login de usuário: apenas pelo nome do pesquisador já cadastrado ---
+    if st.session_state.user:
+        st.success(f"Usuário logado: {st.session_state.user.get('name', '')}")
+        if st.button("Sair", use_container_width=True):
+            st.session_state.user = None
+            st.rerun()
+    else:
+        st.subheader("Login de Pesquisador")
+        researchers_names = sorted(st.session_state.researchers_session.keys())
+        with st.form("form_login_researcher"):
+            login_name = st.selectbox(
+                "Selecione seu nome (pesquisador já cadastrado)",
+                options=researchers_names,
+                index=None,
+                placeholder="Escolha seu nome..."
+            )
+            login_password = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+            if st.form_submit_button("Entrar", use_container_width=True):
+                if not login_name:
+                    st.warning("Selecione seu nome para autenticação.")
+                elif not login_password:
+                    st.warning("Digite sua senha.")
+                else:
+                    try:
+                        resp = requests.post(
+                            f"{BACKEND_URL}/login",
+                            headers=api_headers,
+                            json={"name": login_name, "password": login_password}
+                        )
+                        if resp.status_code == 200:
+                            user_data = resp.json()
+                            st.session_state.user = {
+                                "id": user_data.get("id"),
+                                "name": user_data.get("name"),
+                                "elab_item_id": user_data.get("elab_item_id")
+                            }
+                            st.success(f"Bem-vindo, {login_name}!")
+                            st.rerun()
+                        else:
+                            st.error("Nome ou senha inválidos.")
+                    except Exception as e:
+                        st.error(f"Erro ao autenticar: {e}")
 
     st.divider()
-    
-    st.subheader("Preencher Dados da Solicitação")
-    with st.form("form_experiment"):
-        researchers_in_session = list(st.session_state.researchers_session.keys()) #
-        nome_pesquisador_selecionado = st.selectbox(
-            "Pesquisador (carregados do banco)",
-            options=sorted(researchers_in_session),
-            index=None,
-            placeholder="Escolha um pesquisador..."
-        )
-        
-        c1, c2 = st.columns(2)
-        with c1:
-            agendamento_id = st.text_input("ID de Referência (Agendamento)", help="Código único para referência externa. Ex: 'PROJ-X-001'", placeholder="PROJ-X-001")
-        with c2:
-            tipo_amostra = st.text_input("Tipo de Amostra", value="Sangue Total", help="Ex.: Sangue Total, Soro, Plasma, etc.")
-
-        if st.form_submit_button("Criar Solicitação no eLabFTW", type="primary", use_container_width=True):
-            if not nome_pesquisador_selecionado:
-                st.error("Selecione um pesquisador da lista.")
-            elif not agendamento_id.strip():
-                st.error("O ID de Referência (Agendamento) é obrigatório.")
-            elif agendamento_id.strip() in st.session_state.agendamentos: #
-                st.error("Este ID de Referência já foi usado. Crie um novo.")
+    st.subheader("Cadastrar Novo Pesquisador na Plataforma")
+    with st.form("form_researcher"):
+        name = st.text_input("Nome completo do pesquisador", placeholder="Ex.: Profa. Maria Silva")
+        password = st.text_input("Senha", type="password", placeholder="Digite uma senha")
+        password2 = st.text_input("Confirme a Senha", type="password", placeholder="Repita a senha")
+        if st.form_submit_button("Cadastrar Pesquisador", use_container_width=True):
+            if not name.strip():
+                st.warning("O nome do pesquisador não pode ser vazio.")
+            elif not password or not password2:
+                st.warning("A senha é obrigatória e deve ser confirmada.")
+            elif password != password2:
+                st.warning("As senhas não coincidem.")
+            elif len(password) < 4:
+                st.warning("A senha deve ter pelo menos 4 caracteres.")
             else:
                 try:
-                    researcher_info = st.session_state.researchers_session[nome_pesquisador_selecionado] #
-                    local_id = researcher_info["id"] #
-                    elab_item_id = researcher_info.get("elab_item_id") #
-
-                    with st.spinner("Criando solicitação no eLabFTW..."):
-                        json_body = {
-                            "agendamento_id": agendamento_id.strip(),
-                            "researcher_id": local_id, #
-                            "item_pesquisador_id": elab_item_id or 0,
-                            "display_name": nome_pesquisador_selecionado.strip(),
-                            "tipo_amostra": tipo_amostra.strip() or "Não informado",
+                    with st.spinner(f"Cadastrando '{name.strip()}'..."):
+                        data = api_create_researcher(api_headers, name.strip(), password)
+                        # Garante que a chave 'experiments' exista
+                        if 'experiments' not in data:
+                            data['experiments'] = []
+                        st.session_state.researchers_session[data["name"]] = data
+                        st.success(f"Pesquisador '{data['name']}' cadastrado! (ID Local: {data['id']}, ID eLab: {data['elab_item_id']})")
+                        # Faz login automático do pesquisador cadastrado
+                        st.session_state.user = {
+                            "id": data.get("id"),
+                            "name": data.get("name"),
+                            "elab_item_id": data.get("elab_item_id")
                         }
-                        data = api_create_experiment(api_headers, json_body)
-                        
-                        # 1. Atualiza a lista geral de agendamentos (como já fazia antes)
-                        st.session_state.agendamentos[agendamento_id.strip()] = data["experiment_id"]
-
-                        # 2. Prepara os dados do novo experimento no formato que o frontend espera
-                        new_experiment_data = {
-                            "id": agendamento_id.strip(),
-                            "elab_experiment_id": data["experiment_id"]
-                        }
-
-                        # 3. Adiciona o novo experimento à lista de experimentos do pesquisador na sessão
-                        st.session_state.researchers_session[nome_pesquisador_selecionado]['experiments'].append(new_experiment_data)
-                        
-                        st.success(f"Solicitação criada! ID do Experimento: {data['experiment_id']} | Status: {data['status']}")
-                        st.info("Acompanhe o status na aba 'Acompanhamento e Laudos'.")
+                        st.success(f"Logado como {data.get('name')}")
+                        st.rerun()
                 except requests.exceptions.RequestException as e:
-                    handle_api_error(e, "Criar Solicitação")
+                    handle_api_error(e, "Cadastrar Pesquisador")
 
 # =========================
 # ABA 2: ACOMPANHAMENTO E LAUDOS
@@ -253,55 +320,59 @@ with tab1:
 with tab2:
     st.header("Acompanhamento e Laudo da Análise")
 
-    agendamentos_existentes = list(st.session_state.agendamentos.keys()) #
-    ag_key_selecionado = st.selectbox(
-        "Selecione o ID de Referência da solicitação",
-        options=sorted(agendamentos_existentes, reverse=True),
-        index=None,
-        placeholder="Escolha uma solicitação para consultar..."
-    )
+    if not st.session_state.user:
+        st.warning("Você precisa estar logado para acessar o acompanhamento e laudos.")
+        st.info("Acesse a aba 'Usuários' para fazer login.")
+    else:
+        agendamentos_existentes = list(st.session_state.agendamentos.keys()) #
+        ag_key_selecionado = st.selectbox(
+            "Selecione o ID de Referência da solicitação",
+            options=sorted(agendamentos_existentes, reverse=True),
+            index=None,
+            placeholder="Escolha uma solicitação para consultar..."
+        )
 
-    if st.button("Consultar Status", use_container_width=True, disabled=not ag_key_selecionado):
-        st.session_state.last_consulted_id = ag_key_selecionado
-        st.session_state.pdf_info = {"bytes": None, "name": None}
+        if st.button("Consultar Status", use_container_width=True, disabled=not ag_key_selecionado):
+            st.session_state.last_consulted_id = ag_key_selecionado
+            st.session_state.pdf_info = {"bytes": None, "name": None}
 
-    if st.session_state.last_consulted_id:
-        ag_key = st.session_state.last_consulted_id
-        if ag_key not in st.session_state.agendamentos:
-            st.error(f"ID de Referência '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
-        else:
-            exp_id = st.session_state.agendamentos[ag_key] #
-            st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
-            try:
-                status = api_get_status(api_headers, exp_id)
-                status_messages = {
-                    'None': ("Pendente", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
-                    '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
-                }
-                status_label, status_icon = status_messages.get(status, (status, "❓"))
-                st.metric(label="Status da Análise", value=status_label, delta=status_icon)
+        if st.session_state.last_consulted_id:
+            ag_key = st.session_state.last_consulted_id
+            if ag_key not in st.session_state.agendamentos:
+                st.error(f"ID de Referência '{ag_key}' não encontrado. Verifique se os dados foram carregados.")
+            else:
+                exp_id = st.session_state.agendamentos[ag_key] #
+                st.info(f"Consultando Referência: **{ag_key}** (Experimento eLab: **{exp_id}**)")
+                try:
+                    status = api_get_status(api_headers, exp_id)
+                    status_messages = {
+                        'None': ("Pendente", "🔄"), '1': ("Em Andamento", "⏳"), '2': ("Concluída", "✅"),
+                        '3': ("Requer Reavaliação", "⚠️"), '4': ("Falhou", "❌"),
+                    }
+                    status_label, status_icon = status_messages.get(status, (status, "❓"))
+                    st.metric(label="Status da Análise", value=status_label, delta=status_icon)
 
-                if status == '2':
-                    st.divider()
-                    st.subheader("Gerar Laudo em PDF")
-                    include_changelog = st.checkbox("Incluir histórico de alterações no PDF")
-                    if st.button("Gerar PDF", type="primary", use_container_width=True):
-                        with st.spinner("Gerando PDF..."):
-                            try:
-                                pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
-                                st.session_state.pdf_info["bytes"] = pdf_bytes
-                                st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
-                            except requests.exceptions.RequestException as e:
-                                handle_api_error(e, "Gerar PDF")
-                else:
-                    st.info("A página será atualizada automaticamente a cada 30 segundos para verificar o status.")
-                    st_autorefresh(interval=30 * 1000, key="status_refresh")
-            except requests.exceptions.RequestException as e:
-                handle_api_error(e, f"Consultar Status (ID: {ag_key})")
-    
-    if st.session_state.pdf_info.get("bytes"):
-        st.download_button(label="⬇️ Baixar Laudo Gerado", data=st.session_state.pdf_info["bytes"],
-                           file_name=st.session_state.pdf_info["name"], mime="application/pdf", use_container_width=True)
+                    if status == '2':
+                        st.divider()
+                        st.subheader("Gerar Laudo em PDF")
+                        include_changelog = st.checkbox("Incluir histórico de alterações no PDF")
+                        if st.button("Gerar PDF", type="primary", use_container_width=True):
+                            with st.spinner("Gerando PDF..."):
+                                try:
+                                    pdf_bytes = api_get_pdf(api_headers, exp_id, include_changelog)
+                                    st.session_state.pdf_info["bytes"] = pdf_bytes
+                                    st.session_state.pdf_info["name"] = f"laudo_{ag_key}.pdf"
+                                except requests.exceptions.RequestException as e:
+                                    handle_api_error(e, "Gerar PDF")
+                    else:
+                        st.info("A página será atualizada automaticamente a cada 30 segundos para verificar o status.")
+                        st_autorefresh(interval=30 * 1000, key="status_refresh")
+                except requests.exceptions.RequestException as e:
+                    handle_api_error(e, f"Consultar Status (ID: {ag_key})")
+        
+        if st.session_state.pdf_info.get("bytes"):
+            st.download_button(label="⬇️ Baixar Laudo Gerado", data=st.session_state.pdf_info["bytes"],
+                               file_name=st.session_state.pdf_info["name"], mime="application/pdf", use_container_width=True)
 
 # =========================
 # ABA 3: ADMINISTRAÇÃO
